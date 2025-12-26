@@ -2,12 +2,15 @@
 set -euo pipefail
 
 ##########################################################
-
-# Project: Openstack Automatic Backups
-# Author : houtknots
-# Website: https://houtknots.com/
-# Github : https://github.com/houtknots
-
+#                                                        #
+#           OpenStack Automatic Backup Script            #
+#                                                        #
+#  Automated backup solution for OpenStack instances     #
+#  and volumes with configurable retention policy.       #
+#                                                        #
+#  Repository: https://github.com/net-architect-cloud/os-backup-scheduler
+#  License: Apache-2.0                                          #
+#                                                        #
 ##########################################################
 
 # Specify the amount of days before the backup should be removed

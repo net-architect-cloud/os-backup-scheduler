@@ -45,5 +45,5 @@ jobs:
           RETENTION_DAYS: ${{ vars.RETENTION_DAYS || github.event.inputs.retention_days || '14' }}
         run: |
           echo "Running backup for region: ${{ matrix.region }}"
-          chmod +x ./script.sh
-          ./script.sh
+          chmod +x ./openstack-backup.sh
+          ./openstack-backup.sh

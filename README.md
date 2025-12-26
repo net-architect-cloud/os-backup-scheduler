@@ -1,75 +1,142 @@
-# Automatic snapshots for Openstack
-This script uses the [Openstack CLI](https://docs.openstack.org/newton/user-guide/common/cli-install-openstack-command-line-clients.html)  
-This scripts is made and tested for and within the [CloudVPS Openstack environment](https://l.jhcs.nl/brpnFSPq) most functions will also work with other providers.
+# OpenStack Automatic Backup
 
-## Requirements 
- - [Openstack Command Line Client](https://l.jhcs.nl/AALyHOQu)
- - [Openstack RC File](https://l.jhcs.nl/daNZS33F)
- 
-## How to install the script
-**Download the script:**
-```
-curl -o /usr/local/autoSnapshot.sh https://raw.githubusercontent.com/houtknots/Openstack-Automatic-Snapshot/main/script.sh
-```
+Automated backup solution for OpenStack instances and volumes using GitHub Actions.
 
-**Make the script executable:**
-```
-chmod +x /usr/local/autoSnapshot.sh
-```
+## Features
 
-**Install the Openstack RC File:**
+- **Automatic backups** for instances (boot-from-image) and volumes
+- **Smart detection** of boot-from-volume vs boot-from-image instances
+- **Multi-region support** (runs backups across multiple OpenStack regions)
+- **Configurable retention** with automatic cleanup of old backups
+- **GitHub Actions integration** with Job Summary reports
+- **Robust error handling** with status checks before backup operations
 
-Place the [Openstack RC File](https://l.jhcs.nl/daNZS33F) under the directory `/usr/local/` with the name `rcfile.sh`.
+## Quick Start
 
+### 1. Use this template
 
-If you would like the change the location of the RC file, edit line 13 within the script `rcFile='/usr/local/rcfile.sh'`. You can also run the script with the path to the RC file as argument like: `/usr/local/autoSnapshot.sh /path/to/rcfile.sh`
+Click **"Use this template"** to create a new repository from this template.
 
-The CloudVPS default Openstack RC file asks you to enter your Openstack password. If you would like to run the scripts automated remove `read -sr OS_PASSWORD_INPUT` on line 30 and change `$OS_PASSWORD_INPUT` on line 31 to your password example: `"export OS_PASSWORD="P4$$w0rd"`.
+### 2. Configure GitHub Secrets
 
-**Add a cronjob to automate the script:**
+Go to **Settings** → **Secrets and variables** → **Actions** → **Secrets** and add:
 
-Add a cronjob to run the script at a given time, start by opening crontab (More info at [crontab.guru](https://crontab.guru/)):
-```
-crontab -e
-```
+| Secret | Description |
+|--------|-------------|
+| `OS_USERNAME` | OpenStack username |
+| `OS_PASSWORD` | OpenStack password |
+| `OS_PROJECT_NAME` | OpenStack project name |
 
-Add the following line at the bottom of the crontab to enable daily snapshots at 3 AM.
-```
-0 3 * * * /usr/local/autoSnapshot.sh
-```
+### 3. Configure GitHub Variables
 
-## How to include an instance via the commandline (Openstack API)
-Use the command below to enable auto-snapshots for an instance.
-```
-openstack server set --property autoSnapshot=true <instance uuid>
-# (Optional) Enable availability zone sync
-openstack server set --property snapshotSync=true <instance uuid>
-```
+Go to **Settings** → **Secrets and variables** → **Actions** → **Variables** and add:
 
-Use the command below to enable auto-snapshots for an volume.
-```
-openstack volume set --property autoSnapshot=true <volume uuid>
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `OS_AUTH_URL` | OpenStack authentication URL | `https://api.example.cloud/identity` |
+| `OS_USER_DOMAIN_NAME` | User domain name | `Default` |
+| `OS_PROJECT_DOMAIN_NAME` | Project domain name | `default` |
+| `OS_IDENTITY_API_VERSION` | Identity API version | `3` |
+| `RETENTION_DAYS` | Days to retain backups (optional) | `14` |
+
+### 4. Configure regions
+
+Edit `.github/workflows/openstack-backup.yml` to set your regions:
+
+```yaml
+strategy:
+  matrix:
+    region: [dc3-a, dc4-a]  # Change to your regions
 ```
 
-## How to include an instance via the Openstack Dashboard (Horizon)
-1. Navigate to **Project** > **Compute** > **Instances**.
-2. Press on the small button with arrow on it to open the action menu.
-3. Within the action menu press the **Update Metadata** option.
-4. Add the metadata property **autoSnapshot** with **true** as value.  
-5. (Optional) Add the metadata property **snapshotSync** with **true** as value if you want to enable availability zone syncing.
-6. Enter the text **true** in the metadata property.
-7. Press the **Save** button.
+### 5. Tag resources for backup
 
-## How to include an volume via the Openstack Dashboard (Horizon)
-1. Navigate to **Project** > **Volumes** > **Volumes**.
-2. Press on the small button with arrow on it to open the action menu.
-3. Within the action menu press the **Update Metadata** option.
-4. Add the metadata property **autoSnapshot** with the custom option.
-5. Enter the text **true** in the metadata property.
-6. Press the **Save** button.
+#### For boot-from-image instances:
+```bash
+openstack server set --property autoBackup='true' <instance-name-or-id>
+```
 
-## Test the script
-Run the script by using the command below:
+#### For volumes (including boot volumes):
+```bash
+openstack volume set --property autoBackup='true' <volume-name-or-id>
 ```
-/usr/local/autoSnapshot.sh
+
+## How it works
+
+| Resource Type | Backup Method |
+|---------------|---------------|
+| **Boot-from-image instance** | `openstack server backup create` (creates image snapshot) |
+| **Boot-from-volume instance** | Skipped (backup the volume directly) |
+| **Volume** | `openstack volume backup create --force` |
+
+### Backup naming convention
+
+- Instances: `autoBackup_<timestamp>_<instance-name>`
+- Volumes: `autoBackup_<timestamp>_<volume-name>`
+- Volumes without name: `autoBackup_<timestamp>_<attached-instance>_vol`
+
+## Configuration
+
+### Retention
+
+Backups older than the retention period are automatically deleted. Configure via:
+
+1. **GitHub Variable** `RETENTION_DAYS` (recommended)
+2. **Manual trigger** input when running workflow
+3. **Default**: 14 days
+
+### Schedule
+
+By default, backups run daily at 2:00 AM UTC. Edit the cron in `.github/workflows/openstack-backup.yml`:
+
+```yaml
+schedule:
+  - cron: '0 2 * * *'  # Daily at 2:00 AM UTC
 ```
+
+## Manual Trigger
+
+1. Go to **Actions** → **OpenStack Automatic Backup**
+2. Click **Run workflow**
+3. Optionally set `retention_days`
+4. Click **Run workflow**
+
+## Tagging Resources via Horizon Dashboard
+
+### Instances
+1. Navigate to **Project** → **Compute** → **Instances**
+2. Click the dropdown arrow → **Update Metadata**
+3. Add property `autoBackup` with value `true`
+4. Click **Save**
+
+### Volumes
+1. Navigate to **Project** → **Volumes** → **Volumes**
+2. Click the dropdown arrow → **Update Metadata**
+3. Add property `autoBackup` with value `true`
+4. Click **Save**
+
+## Job Summary
+
+After each run, a summary is generated in the GitHub Actions UI showing:
+- Number of instances/volumes backed up
+- Number of old backups deleted
+- Any errors encountered
+- Region and retention settings
+
+## Requirements
+
+- OpenStack cloud with Cinder backup service enabled
+- GitHub Actions runner with internet access to OpenStack API
+
+## License
+
+Apache License 2.0 - See [LICENSE](LICENSE) for details.
+
+This license requires you to:
+- Include a copy of the license in any redistribution
+- State significant changes made to the software
+- Retain all copyright, patent, trademark, and attribution notices
+
+## Credits
+
+Originally based on [houtknots/Openstack-Automatic-Snapshot](https://github.com/houtknots/Openstack-Automatic-Snapshot)
