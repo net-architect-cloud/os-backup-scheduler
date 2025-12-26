@@ -65,8 +65,23 @@ jobs:
             echo "message=OpenStack backup failed" >> $GITHUB_OUTPUT
           fi
 
+      - name: Detect notification configuration
+        id: notify_cfg
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then echo "slack=true" >> $GITHUB_OUTPUT; else echo "slack=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then echo "discord=true" >> $GITHUB_OUTPUT; else echo "discord=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${TEAMS_WEBHOOK_URL:-}" ]; then echo "teams=true" >> $GITHUB_OUTPUT; else echo "teams=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then echo "telegram=true" >> $GITHUB_OUTPUT; else echo "telegram=false" >> $GITHUB_OUTPUT; fi
+
       # Slack notification (skipped if SLACK_WEBHOOK_URL secret is not set)
       - name: Notify Slack
+        if: steps.notify_cfg.outputs.slack == 'true'
         continue-on-error: true
         uses: slackapi/slack-github-action@v1.25.0
         with:
@@ -93,6 +108,7 @@ jobs:
 
       # Discord notification (skipped if DISCORD_WEBHOOK_URL secret is not set)
       - name: Notify Discord
+        if: steps.notify_cfg.outputs.discord == 'true'
         continue-on-error: true
         uses: Ilshidur/action-discord@0.3.2
         env:
@@ -102,6 +118,7 @@ jobs:
 
       # Microsoft Teams notification (skipped if TEAMS_WEBHOOK_URL secret is not set)
       - name: Notify Microsoft Teams
+        if: steps.notify_cfg.outputs.teams == 'true'
         continue-on-error: true
         uses: jdcargile/ms-teams-notification@v1.4
         with:
@@ -113,6 +130,7 @@ jobs:
 
       # Telegram notification (skipped if TELEGRAM_BOT_TOKEN secret or TELEGRAM_CHAT_ID variable is not set)
       - name: Notify Telegram
+        if: steps.notify_cfg.outputs.telegram == 'true'
         continue-on-error: true
         uses: appleboy/telegram-action@master
         with:
