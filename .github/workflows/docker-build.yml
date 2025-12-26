@@ -13,6 +13,8 @@ on:
 
 env:
   IMAGE_NAME: os-backup-scheduler
+  DOCKERHUB_REPO: netarchitectcloud
+  QUAY_REPO: netarchitect
 
 jobs:
   build-and-push:
@@ -88,8 +90,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.DOCKERHUB_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+            ${{ env.DOCKERHUB_REPO }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
         continue-on-error: true
@@ -100,8 +102,8 @@ jobs:
           context: .
           push: true
           tags: |
-            quay.io/${{ secrets.QUAY_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-            quay.io/${{ secrets.QUAY_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            quay.io/${{ env.QUAY_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+            quay.io/${{ env.QUAY_REPO }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
         continue-on-error: true
@@ -113,5 +115,5 @@ jobs:
           echo "| Registry | Image |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Container Registry | \`ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Hub | \`${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Quay.io | \`quay.io/${{ secrets.QUAY_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Hub | \`${{ env.DOCKERHUB_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Quay.io | \`quay.io/${{ env.QUAY_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
