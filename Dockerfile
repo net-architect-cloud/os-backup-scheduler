@@ -1,19 +1,21 @@
-FROM python:3.12-slim
+FROM rockylinux:9-minimal
 
 LABEL maintainer="Net Architect"
 LABEL description="OpenStack Automatic Backup - Automated backup solution for OpenStack instances and volumes"
 LABEL org.opencontainers.image.source="https://github.com/net-architect-cloud/os-backup-scheduler"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies and OpenStack CLI
+RUN microdnf install -y \
+    python3 \
+    python3-pip \
     jq \
     bash \
     coreutils \
-    && rm -rf /var/lib/apt/lists/*
+    && microdnf clean all
 
 # Install OpenStack CLI
-RUN pip install --no-cache-dir python-openstackclient
+RUN pip3 install --no-cache-dir python-openstackclient
 
 # Create app directory
 WORKDIR /app
