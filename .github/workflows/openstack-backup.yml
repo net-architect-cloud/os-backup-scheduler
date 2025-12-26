@@ -65,9 +65,9 @@ jobs:
             echo "message=OpenStack backup failed" >> $GITHUB_OUTPUT
           fi
 
-      # Slack notification
+      # Slack notification (skipped if SLACK_WEBHOOK_URL secret is not set)
       - name: Notify Slack
-        if: secrets.SLACK_WEBHOOK_URL != ''
+        continue-on-error: true
         uses: slackapi/slack-github-action@v1.25.0
         with:
           payload: |
@@ -91,18 +91,18 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
-      # Discord notification
+      # Discord notification (skipped if DISCORD_WEBHOOK_URL secret is not set)
       - name: Notify Discord
-        if: secrets.DISCORD_WEBHOOK_URL != ''
+        continue-on-error: true
         uses: Ilshidur/action-discord@0.3.2
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
         with:
           args: "${{ steps.status.outputs.emoji }} **${{ steps.status.outputs.message }}**\n\n**Repository:** ${{ github.repository }}\n**Workflow:** ${{ github.workflow }}\n**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-      # Microsoft Teams notification
+      # Microsoft Teams notification (skipped if TEAMS_WEBHOOK_URL secret is not set)
       - name: Notify Microsoft Teams
-        if: secrets.TEAMS_WEBHOOK_URL != ''
+        continue-on-error: true
         uses: jdcargile/ms-teams-notification@v1.4
         with:
           github-token: ${{ github.token }}
@@ -111,9 +111,9 @@ jobs:
           notification-color: ${{ steps.status.outputs.color_hex }}
           timezone: UTC
 
-      # Telegram notification
+      # Telegram notification (skipped if TELEGRAM_BOT_TOKEN secret or TELEGRAM_CHAT_ID variable is not set)
       - name: Notify Telegram
-        if: secrets.TELEGRAM_BOT_TOKEN != '' && vars.TELEGRAM_CHAT_ID != ''
+        continue-on-error: true
         uses: appleboy/telegram-action@master
         with:
           to: ${{ vars.TELEGRAM_CHAT_ID }}
