@@ -24,6 +24,7 @@ jobs:
     
     steps:
       - name: Run backup for ${{ matrix.region }}
+        id: backup
         env:
           # Organization variables (non-sensitive)
           OS_AUTH_URL: ${{ vars.OS_AUTH_URL }}
@@ -39,3 +40,104 @@ jobs:
         run: |
           echo "Running backup for region: ${{ matrix.region }}"
           /app/openstack-backup.sh
+
+  # Notification job - runs after all backup jobs complete
+  notify:
+    runs-on: ubuntu-latest
+    needs: backup
+    if: always()
+    
+    steps:
+      - name: Set notification status
+        id: status
+        run: |
+          if [ "${{ needs.backup.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+            echo "color_hex=28a745" >> $GITHUB_OUTPUT
+            echo "message=OpenStack backup completed successfully" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "color_hex=dc3545" >> $GITHUB_OUTPUT
+            echo "message=OpenStack backup failed" >> $GITHUB_OUTPUT
+          fi
+
+      # Slack notification
+      - name: Notify Slack
+        if: vars.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*\n\n*Repository:* ${{ github.repository }}\n*Workflow:* ${{ github.workflow }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      # Discord notification
+      - name: Notify Discord
+        if: vars.DISCORD_WEBHOOK_URL != ''
+        uses: Ilshidur/action-discord@0.3.2
+        env:
+          DISCORD_WEBHOOK: ${{ vars.DISCORD_WEBHOOK_URL }}
+        with:
+          args: "${{ steps.status.outputs.emoji }} **${{ steps.status.outputs.message }}**\n\n**Repository:** ${{ github.repository }}\n**Workflow:** ${{ github.workflow }}\n**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      # Microsoft Teams notification
+      - name: Notify Microsoft Teams
+        if: vars.TEAMS_WEBHOOK_URL != ''
+        uses: jdcargile/ms-teams-notification@v1.4
+        with:
+          github-token: ${{ github.token }}
+          ms-teams-webhook-uri: ${{ vars.TEAMS_WEBHOOK_URL }}
+          notification-summary: "${{ steps.status.outputs.message }}"
+          notification-color: ${{ steps.status.outputs.color_hex }}
+          timezone: UTC
+
+      # Telegram notification
+      - name: Notify Telegram
+        if: vars.TELEGRAM_BOT_TOKEN != '' && vars.TELEGRAM_CHAT_ID != ''
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ vars.TELEGRAM_CHAT_ID }}
+          token: ${{ vars.TELEGRAM_BOT_TOKEN }}
+          format: markdown
+          message: |
+            ${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*
+            
+            *Repository:* ${{ github.repository }}
+            *Workflow:* ${{ github.workflow }}
+            *Status:* ${{ needs.backup.result }}
+            
+            [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      # Email notification (via GitHub's native notifications)
+      - name: Create issue on failure
+        if: needs.backup.result == 'failure' && vars.CREATE_ISSUE_ON_FAILURE == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '❌ OpenStack Backup Failed',
+              body: `## Backup Failure Report\n\n**Workflow:** ${context.workflow}\n**Run ID:** ${context.runId}\n**Date:** ${new Date().toISOString()}\n\n[View Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              labels: ['backup-failure', 'automated']
+            })
