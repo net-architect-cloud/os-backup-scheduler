@@ -15,22 +15,15 @@ on:
 jobs:
   backup:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/net-architect-cloud/os-backup-scheduler:latest
     strategy:
       matrix:
         region: [dc3-a, dc4-a]
       fail-fast: false
     
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install OpenStack CLI
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip jq
-          pip3 install python-openstackclient
-
-      - name: Run backup script for ${{ matrix.region }}
+      - name: Run backup for ${{ matrix.region }}
         env:
           # Organization variables (non-sensitive)
           OS_AUTH_URL: ${{ vars.OS_AUTH_URL }}
@@ -45,5 +38,4 @@ jobs:
           RETENTION_DAYS: ${{ vars.RETENTION_DAYS || github.event.inputs.retention_days || '14' }}
         run: |
           echo "Running backup for region: ${{ matrix.region }}"
-          chmod +x ./openstack-backup.sh
-          ./openstack-backup.sh
+          /app/openstack-backup.sh
