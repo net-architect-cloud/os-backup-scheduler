@@ -129,34 +129,34 @@ Optional notifications can be configured to alert you on backup success or failu
 
 ### Available notification channels
 
-| Channel | Variable(s) to configure |
-|---------|-------------------------|
-| Slack | `SLACK_WEBHOOK_URL` |
-| Discord | `DISCORD_WEBHOOK_URL` |
-| Microsoft Teams | `TEAMS_WEBHOOK_URL` |
-| Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` |
-| GitHub Issue on failure | `CREATE_ISSUE_ON_FAILURE` = `true` |
+| Channel | Secret(s) | Variable(s) |
+|---------|-----------|-------------|
+| Slack | `SLACK_WEBHOOK_URL` | - |
+| Discord | `DISCORD_WEBHOOK_URL` | - |
+| Microsoft Teams | `TEAMS_WEBHOOK_URL` | - |
+| Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_CHAT_ID` |
+| GitHub Issue on failure | - | `CREATE_ISSUE_ON_FAILURE` = `true` |
 
 ### Setup instructions
 
 #### Slack
 1. Create an [Incoming Webhook](https://api.slack.com/messaging/webhooks) in your Slack workspace
-2. Add `SLACK_WEBHOOK_URL` as a GitHub variable
+2. Add `SLACK_WEBHOOK_URL` as a GitHub **secret**
 
 #### Discord
 1. In your Discord channel, go to **Settings** → **Integrations** → **Webhooks**
 2. Create a webhook and copy the URL
-3. Add `DISCORD_WEBHOOK_URL` as a GitHub variable
+3. Add `DISCORD_WEBHOOK_URL` as a GitHub **secret**
 
 #### Microsoft Teams
 1. In your Teams channel, click **...** → **Connectors** → **Incoming Webhook**
 2. Configure and copy the webhook URL
-3. Add `TEAMS_WEBHOOK_URL` as a GitHub variable
+3. Add `TEAMS_WEBHOOK_URL` as a GitHub **secret**
 
 #### Telegram
 1. Create a bot via [@BotFather](https://t.me/botfather) and get the token
 2. Get your chat ID (send a message to your bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates`)
-3. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as GitHub variables
+3. Add `TELEGRAM_BOT_TOKEN` as a GitHub **secret** and `TELEGRAM_CHAT_ID` as a GitHub **variable**
 
 #### GitHub Issue on failure
 1. Add `CREATE_ISSUE_ON_FAILURE` = `true` as a GitHub variable

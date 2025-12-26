@@ -67,7 +67,7 @@ jobs:
 
       # Slack notification
       - name: Notify Slack
-        if: vars.SLACK_WEBHOOK_URL != ''
+        if: secrets.SLACK_WEBHOOK_URL != ''
         uses: slackapi/slack-github-action@v1.25.0
         with:
           payload: |
@@ -88,36 +88,36 @@ jobs:
               ]
             }
         env:
-          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
       # Discord notification
       - name: Notify Discord
-        if: vars.DISCORD_WEBHOOK_URL != ''
+        if: secrets.DISCORD_WEBHOOK_URL != ''
         uses: Ilshidur/action-discord@0.3.2
         env:
-          DISCORD_WEBHOOK: ${{ vars.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
         with:
           args: "${{ steps.status.outputs.emoji }} **${{ steps.status.outputs.message }}**\n\n**Repository:** ${{ github.repository }}\n**Workflow:** ${{ github.workflow }}\n**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       # Microsoft Teams notification
       - name: Notify Microsoft Teams
-        if: vars.TEAMS_WEBHOOK_URL != ''
+        if: secrets.TEAMS_WEBHOOK_URL != ''
         uses: jdcargile/ms-teams-notification@v1.4
         with:
           github-token: ${{ github.token }}
-          ms-teams-webhook-uri: ${{ vars.TEAMS_WEBHOOK_URL }}
+          ms-teams-webhook-uri: ${{ secrets.TEAMS_WEBHOOK_URL }}
           notification-summary: "${{ steps.status.outputs.message }}"
           notification-color: ${{ steps.status.outputs.color_hex }}
           timezone: UTC
 
       # Telegram notification
       - name: Notify Telegram
-        if: vars.TELEGRAM_BOT_TOKEN != '' && vars.TELEGRAM_CHAT_ID != ''
+        if: secrets.TELEGRAM_BOT_TOKEN != '' && vars.TELEGRAM_CHAT_ID != ''
         uses: appleboy/telegram-action@master
         with:
           to: ${{ vars.TELEGRAM_CHAT_ID }}
-          token: ${{ vars.TELEGRAM_BOT_TOKEN }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           format: markdown
           message: |
             ${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*
