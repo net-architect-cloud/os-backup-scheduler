@@ -123,10 +123,101 @@ After each run, a summary is generated in the GitHub Actions UI showing:
 - Any errors encountered
 - Region and retention settings
 
+## Docker / Podman Usage
+
+A container image is available with all dependencies pre-installed. Works with both Docker and Podman.
+
+### Available registries
+
+| Registry | Image |
+|----------|-------|
+| GitHub Container Registry | `ghcr.io/net-architect-cloud/os-backup-scheduler:latest` |
+| Docker Hub | `docker.io/netarchitectcloud/os-backup-scheduler:latest` |
+| Quay.io | `quay.io/netarchitect/os-backup-scheduler:latest` |
+
+### Pull the image
+
+```bash
+# From GitHub Container Registry (recommended)
+docker pull ghcr.io/net-architect-cloud/os-backup-scheduler:latest
+podman pull ghcr.io/net-architect-cloud/os-backup-scheduler:latest
+
+# From Docker Hub
+docker pull netarchitectcloud/os-backup-scheduler:latest
+podman pull docker.io/netarchitectcloud/os-backup-scheduler:latest
+
+# From Quay.io
+docker pull quay.io/netarchitect/os-backup-scheduler:latest
+podman pull quay.io/netarchitect/os-backup-scheduler:latest
+```
+
+### Run manually
+
+```bash
+# Docker
+docker run --rm \
+  -e OS_AUTH_URL="https://api.example.cloud/identity" \
+  -e OS_USERNAME="your-username" \
+  -e OS_PASSWORD="your-password" \
+  -e OS_PROJECT_NAME="your-project" \
+  -e OS_USER_DOMAIN_NAME="Default" \
+  -e OS_PROJECT_DOMAIN_NAME="default" \
+  -e OS_REGION_NAME="region-a" \
+  -e OS_IDENTITY_API_VERSION="3" \
+  -e RETENTION_DAYS="14" \
+  ghcr.io/net-architect-cloud/os-backup-scheduler:latest
+
+# Podman
+podman run --rm \
+  -e OS_AUTH_URL="https://api.example.cloud/identity" \
+  -e OS_USERNAME="your-username" \
+  -e OS_PASSWORD="your-password" \
+  -e OS_PROJECT_NAME="your-project" \
+  -e OS_USER_DOMAIN_NAME="Default" \
+  -e OS_PROJECT_DOMAIN_NAME="default" \
+  -e OS_REGION_NAME="region-a" \
+  -e OS_IDENTITY_API_VERSION="3" \
+  -e RETENTION_DAYS="14" \
+  ghcr.io/net-architect-cloud/os-backup-scheduler:latest
+```
+
+### Build locally
+
+```bash
+# Docker
+docker build -t os-backup-scheduler .
+
+# Podman
+podman build -t os-backup-scheduler .
+```
+
+### Use in GitHub Actions with container
+
+```yaml
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/net-architect-cloud/os-backup-scheduler:latest
+    steps:
+      - name: Run backup
+        env:
+          OS_AUTH_URL: ${{ vars.OS_AUTH_URL }}
+          OS_USERNAME: ${{ secrets.OS_USERNAME }}
+          OS_PASSWORD: ${{ secrets.OS_PASSWORD }}
+          OS_PROJECT_NAME: ${{ secrets.OS_PROJECT_NAME }}
+          OS_USER_DOMAIN_NAME: ${{ vars.OS_USER_DOMAIN_NAME }}
+          OS_PROJECT_DOMAIN_NAME: ${{ vars.OS_PROJECT_DOMAIN_NAME }}
+          OS_REGION_NAME: ${{ matrix.region }}
+          OS_IDENTITY_API_VERSION: ${{ vars.OS_IDENTITY_API_VERSION }}
+          RETENTION_DAYS: ${{ vars.RETENTION_DAYS || '14' }}
+        run: /app/openstack-backup.sh
+```
+
 ## Requirements
 
 - OpenStack cloud with Cinder backup service enabled
-- GitHub Actions runner with internet access to OpenStack API
+- GitHub Actions runner with internet access to OpenStack API (or use Docker image)
 
 ## License
 
