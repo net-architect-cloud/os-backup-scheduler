@@ -10,8 +10,6 @@ RUN dnf install -y \
     python3 \
     python3-pip \
     jq \
-    bash \
-    coreutils \
     && dnf clean all
 
 # Install OpenStack CLI
