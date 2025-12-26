@@ -1,0 +1,49 @@
+name: OpenStack Automatic Backup
+
+on:
+  # Run daily at 2:00 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Number of days to retain backups'
+        required: false
+        default: '14'
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: [dc3-a, dc4-a]
+      fail-fast: false
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install OpenStack CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip jq
+          pip3 install python-openstackclient
+
+      - name: Run backup script for ${{ matrix.region }}
+        env:
+          # Organization variables (non-sensitive)
+          OS_AUTH_URL: ${{ vars.OS_AUTH_URL }}
+          OS_USER_DOMAIN_NAME: ${{ vars.OS_USER_DOMAIN_NAME }}
+          OS_PROJECT_DOMAIN_NAME: ${{ vars.OS_PROJECT_DOMAIN_NAME }}
+          OS_REGION_NAME: ${{ matrix.region }}
+          OS_IDENTITY_API_VERSION: ${{ vars.OS_IDENTITY_API_VERSION }}
+          # Secrets (sensitive)
+          OS_USERNAME: ${{ secrets.OS_USERNAME }}
+          OS_PASSWORD: ${{ secrets.OS_PASSWORD }}
+          OS_PROJECT_NAME: ${{ secrets.OS_PROJECT_NAME }}
+          RETENTION_DAYS: ${{ vars.RETENTION_DAYS || github.event.inputs.retention_days || '14' }}
+        run: |
+          echo "Running backup for region: ${{ matrix.region }}"
+          chmod +x ./script.sh
+          ./script.sh
