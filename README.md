@@ -1,17 +1,17 @@
-# OpenStack Automatic Backup
+# ☁️ OpenStack Automatic Backup
 
 Automated backup solution for OpenStack instances and volumes using GitHub Actions.
 
-## Features
+## ✨ Features
 
-- **Automatic backups** for instances (boot-from-image) and volumes
-- **Smart detection** of boot-from-volume vs boot-from-image instances
-- **Multi-region support** (runs backups across multiple OpenStack regions)
-- **Configurable retention** with automatic cleanup of old backups
-- **GitHub Actions integration** with Job Summary reports
-- **Robust error handling** with status checks before backup operations
+- 💾 **Automatic backups** for instances (boot-from-image) and volumes
+- 🔍 **Smart detection** of boot-from-volume vs boot-from-image instances
+- 🌍 **Multi-region support** (runs backups across multiple OpenStack regions)
+- 🗑️ **Configurable retention** with automatic cleanup of old backups
+- 📊 **GitHub Actions integration** with Job Summary reports
+- 🛡️ **Robust error handling** with status checks before backup operations
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Use this template
 
@@ -61,7 +61,7 @@ openstack server set --property autoBackup='true' <instance-name-or-id>
 openstack volume set --property autoBackup='true' <volume-name-or-id>
 ```
 
-## How it works
+## ⚙️ How it works
 
 | Resource Type | Backup Method |
 |---------------|---------------|
@@ -75,7 +75,7 @@ openstack volume set --property autoBackup='true' <volume-name-or-id>
 - Volumes: `autoBackup_<timestamp>_<volume-name>`
 - Volumes without name: `autoBackup_<timestamp>_<attached-instance>_vol`
 
-## Configuration
+## 🔧 Configuration
 
 ### Retention
 
@@ -94,14 +94,14 @@ schedule:
   - cron: '0 2 * * *'  # Daily at 2:00 AM UTC
 ```
 
-## Manual Trigger
+## ▶️ Manual Trigger
 
 1. Go to **Actions** → **OpenStack Automatic Backup**
 2. Click **Run workflow**
 3. Optionally set `retention_days`
 4. Click **Run workflow**
 
-## Tagging Resources via Horizon Dashboard
+## 🏷️ Tagging Resources via Horizon Dashboard
 
 ### Instances
 1. Navigate to **Project** → **Compute** → **Instances**
@@ -115,7 +115,7 @@ schedule:
 3. Add property `autoBackup` with value `true`
 4. Click **Save**
 
-## Job Summary
+## 📋 Job Summary
 
 After each run, a summary is generated in the GitHub Actions UI showing:
 - Number of instances/volumes backed up
@@ -123,7 +123,7 @@ After each run, a summary is generated in the GitHub Actions UI showing:
 - Any errors encountered
 - Region and retention settings
 
-## Docker / Podman Usage
+## 🐳 Docker / Podman Usage
 
 A container image is available with all dependencies pre-installed. Works with both Docker and Podman.
 
@@ -214,12 +214,12 @@ jobs:
         run: /app/openstack-backup.sh
 ```
 
-## Requirements
+## 📦 Requirements
 
 - OpenStack cloud with Cinder backup service enabled
 - GitHub Actions runner with internet access to OpenStack API (or use Docker image)
 
-## License
+## 📄 License
 
 Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
@@ -228,6 +228,6 @@ This license requires you to:
 - State significant changes made to the software
 - Retain all copyright, patent, trademark, and attribution notices
 
-## Credits
+## 🙏 Credits
 
 Originally based on [houtknots/Openstack-Automatic-Snapshot](https://github.com/houtknots/Openstack-Automatic-Snapshot)
