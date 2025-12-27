@@ -1,9 +1,10 @@
 name: OpenStack Automatic Backup
 
 on:
-  # Run daily at 2:00 AM UTC
-  schedule:
-    - cron: '0 2 * * *'
+  # Scheduled runs are disabled by default in this template.
+  # To enable, uncomment the following lines:
+  # schedule:
+  #   - cron: '0 2 * * *'  # Daily at 2:00 AM UTC
   # Allow manual trigger
   workflow_dispatch:
     inputs:

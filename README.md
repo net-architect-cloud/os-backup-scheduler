@@ -85,9 +85,22 @@ Backups older than the retention period are automatically deleted. Configure via
 2. **Manual trigger** input when running workflow
 3. **Default**: 14 days
 
+### Enable scheduled runs
+
+This repository is a **template**. The backup workflow is **manual-only** by default to avoid running without configuration.
+
+To enable daily scheduled runs, edit `.github/workflows/openstack-backup.yml` and add a `schedule` trigger, for example:
+
+```yaml
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2:00 AM UTC
+  workflow_dispatch:
+```
+
 ### Schedule
 
-By default, backups run daily at 2:00 AM UTC. Edit the cron in `.github/workflows/openstack-backup.yml`:
+Once enabled, backups can run on a schedule using a cron in `.github/workflows/openstack-backup.yml`:
 
 ```yaml
 schedule:
