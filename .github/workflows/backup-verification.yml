@@ -3,8 +3,8 @@ name: Backup Verification
 on:
   # Scheduled to run 4 hours after the main backup (adjust based on your backup schedule)
   # If backup runs at 2:00 AM, verification runs at 6:00 AM
-  schedule:
-    - cron: '0 6 * * *'  # Daily at 6:00 AM UTC (4 hours after backup at 2:00 AM)
+  # schedule:
+    # - cron: '0 6 * * *'  # Daily at 6:00 AM UTC (4 hours after backup at 2:00 AM)
   # Allow manual trigger
   workflow_dispatch:
 
