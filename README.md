@@ -10,6 +10,10 @@ Automated backup solution for OpenStack instances and volumes using GitHub Actio
 - 🗑️ **Configurable retention** with automatic cleanup of old backups
 - 📊 **GitHub Actions integration** with Job Summary reports
 - 🛡️ **Robust error handling** with status checks before backup operations
+- ✅ **Backup verification workflow** - Automated verification 4 hours after backup
+- 🔴 **Stuck backup detection** - Detects backups stuck in processing state (old and new)
+- 📝 **Detailed console output** - All errors and stuck resources displayed in logs
+- 🚨 **Smart notifications** - Alerts only on failures (backup or verification)
 
 ## 🚀 Quick Start
 
@@ -75,6 +79,29 @@ openstack volume set --property autoBackup='true' <volume-name-or-id>
 - Volumes: `autoBackup_<timestamp>_<volume-name>`
 - Volumes without name: `autoBackup_<timestamp>_<attached-instance>_vol`
 
+### Error handling and state detection
+
+The backup script includes robust error handling:
+
+**Instance state checks:**
+- Skips instances with active tasks (`task_state` not None)
+- Detects boot-from-volume vs boot-from-image
+
+**Volume state checks:**
+Before creating a backup, the script checks if the volume is in an unstable state:
+- `creating` - Volume is being created
+- `backing-up` - Volume is already being backed up
+- `deleting` - Volume is being deleted
+- `restoring-backup` - Volume is being restored
+
+If a volume is in any of these states, an **error is generated** and the workflow will fail, triggering notifications.
+
+**Verification workflow checks:**
+The verification workflow (4 hours later) detects:
+- Backups stuck in processing states (today and old backups)
+- Source volumes stuck in unstable states
+- Failed backups with error status
+
 ## 🔧 Configuration
 
 ### Retention
@@ -98,14 +125,25 @@ on:
   workflow_dispatch:
 ```
 
-### Schedule
+### Backup Verification Workflow
 
-Once enabled, backups can run on a schedule using a cron in `.github/workflows/openstack-backup.yml`:
+A separate verification workflow (`backup-verification.yml`) runs **4 hours after the backup** to check:
+
+- ✅ All backups completed successfully
+- ⚠️ Backups stuck in processing state (creating, backing-up, queued, saving)
+- 🔴 Old backups still stuck from previous days
+- 📊 Source volumes in unstable states
+
+**Default schedule:** `0 6 * * *` (6:00 AM UTC, 4 hours after backup at 2:00 AM)
+
+**Adjust the verification schedule** in `.github/workflows/backup-verification.yml` to run 4 hours after your backup time:
 
 ```yaml
 schedule:
-  - cron: '0 2 * * *'  # Daily at 2:00 AM UTC
+  - cron: '0 6 * * *'  # Adjust based on your backup schedule
 ```
+
+**Manual trigger:** You can also run verification manually via Actions → Backup Verification → Run workflow
 
 ## ▶️ Manual Trigger
 
@@ -130,15 +168,46 @@ schedule:
 
 ## 📋 Job Summary
 
-After each run, a summary is generated in the GitHub Actions UI showing:
+### Backup Workflow
+
+After each backup run, a summary is generated showing:
 - Number of instances/volumes backed up
 - Number of old backups deleted
 - Any errors encountered
 - Region and retention settings
 
+### Verification Workflow
+
+After verification (4 hours later), a detailed report shows:
+
+**For today's backups:**
+- ✅ Successfully completed backups
+- ⚠️ Stuck backups (still processing)
+- ❌ Failed backups
+
+**For old backups:**
+- 🔴 Old backups still stuck in processing state (critical issue)
+- Date of creation for each stuck backup
+
+**For source volumes:**
+- Status of volumes with autoBackup metadata
+- Detection of volumes stuck in unstable states
+
+**Console output:**
+All errors and stuck resources are displayed in the workflow logs with:
+- Clear emoji indicators (❌ ⚠️ 🔴)
+- Resource names and statuses
+- Creation dates for old backups
+- Formatted sections for easy reading
+
 ## 🔔 Notifications
 
-Optional notifications can be configured to alert you on backup success or failure. All notifications are **optional** - they only trigger if the corresponding webhook/token is configured.
+Notifications are sent **only on failure** to avoid alert fatigue. Notifications trigger when:
+
+1. **Backup workflow fails** - Error during backup execution
+2. **Verification workflow fails** - Backups stuck or failed after 4 hours
+
+All notifications are **optional** - they only trigger if the corresponding webhook/token is configured.
 
 ### Available notification channels
 
@@ -173,7 +242,50 @@ Optional notifications can be configured to alert you on backup success or failu
 
 #### GitHub Issue on failure
 1. Add `CREATE_ISSUE_ON_FAILURE` = `true` as a GitHub variable
-2. An issue will be automatically created when backup fails
+2. An issue will be automatically created when backup or verification fails
+
+## 🔄 Workflows
+
+This project includes two GitHub Actions workflows:
+
+### 1. OpenStack Automatic Backup (`openstack-backup.yml`)
+
+**Purpose:** Creates backups of tagged instances and volumes
+
+**Triggers:**
+- Manual: `workflow_dispatch`
+- Scheduled: Disabled by default (uncomment cron to enable)
+
+**What it does:**
+- Authenticates with OpenStack
+- Finds all resources with `autoBackup=true` metadata
+- Creates backups (images for instances, volume backups for volumes)
+- Deletes old backups based on retention policy
+- Generates summary report
+- Sends notifications on failure
+
+**Runs on:** Multi-region matrix (configure regions in workflow file)
+
+### 2. Backup Verification (`backup-verification.yml`)
+
+**Purpose:** Verifies backup completion and detects stuck backups
+
+**Triggers:**
+- Manual: `workflow_dispatch`
+- Scheduled: `0 6 * * *` (4 hours after backup at 2:00 AM)
+
+**What it does:**
+- Checks today's backups status (active/stuck/error)
+- Detects old backups still stuck in processing
+- Verifies source volumes are in stable states
+- Generates detailed verification report with console output
+- Sends notifications on failure (stuck or failed backups)
+
+**Key features:**
+- 🔴 Detects backups stuck for multiple days
+- ⚠️ Identifies volumes in unstable states
+- 📊 Detailed console logs with all errors
+- ✅ Only alerts on actual problems
 
 ## 🐳 Docker / Podman Usage
 
