@@ -147,10 +147,11 @@ while IFS='|' read -r volume volumeName; do
     # Check if the autoBackup is set to true (supports JSON format)
     if [[ $properties =~ "autoBackup".*"true" ]]; then
         echo "Creating backup of volume: ${volumeName} - ${volume}"
-        # Check if volume is already being backed up
+        # Check if volume is already being backed up or in an unstable state
         volumeStatus=$(echo "$volumeData" | jq -r '.status // "unknown"')
-        if [[ "$volumeStatus" == "backing-up" ]]; then
-            echo "Skipping volume ${volumeName}: already being backed up"
+        if [[ "$volumeStatus" == "backing-up" || "$volumeStatus" == "creating" || "$volumeStatus" == "deleting" || "$volumeStatus" == "restoring-backup" ]]; then
+            echo "Error: Volume ${volumeName} is in '${volumeStatus}' state - cannot create backup"
+            ((errors++)) || true
             continue
         fi
         backupError=$(openstack volume backup create "${volume}" --name "autoBackup_${timestamp}_${volumeName}" --force 2>&1) && backupSuccess=true || backupSuccess=false

@@ -1,0 +1,341 @@
+name: Backup Verification
+
+on:
+  # Scheduled to run 4 hours after the main backup (adjust based on your backup schedule)
+  # If backup runs at 2:00 AM, verification runs at 6:00 AM
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6:00 AM UTC (4 hours after backup at 2:00 AM)
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/net-architect-cloud/os-backup-scheduler:latest
+    strategy:
+      matrix:
+        region: [dc3-a, dc4-a]
+      fail-fast: false
+    
+    steps:
+      - name: Verify backup status for ${{ matrix.region }}
+        id: verify
+        env:
+          OS_AUTH_URL: ${{ vars.OS_AUTH_URL }}
+          OS_USER_DOMAIN_NAME: ${{ vars.OS_USER_DOMAIN_NAME }}
+          OS_PROJECT_DOMAIN_NAME: ${{ vars.OS_PROJECT_DOMAIN_NAME }}
+          OS_REGION_NAME: ${{ matrix.region }}
+          OS_IDENTITY_API_VERSION: ${{ vars.OS_IDENTITY_API_VERSION }}
+          OS_USERNAME: ${{ secrets.OS_USERNAME }}
+          OS_PASSWORD: ${{ secrets.OS_PASSWORD }}
+          OS_PROJECT_NAME: ${{ secrets.OS_PROJECT_NAME }}
+        run: |
+          echo "## Backup Verification Report - Region: ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Verification Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get today's date for filtering
+          TODAY=$(date +"%Y-%m-%d")
+          
+          # Check instance backups (images)
+          echo "### Instance Backups (Images) - Today" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          STUCK_IMAGES=0
+          ACTIVE_IMAGES=0
+          ERROR_IMAGES=0
+          STUCK_OLD_IMAGES=0
+          
+          while IFS='|' read -r image_id image_name image_status created_at; do
+            [[ -z "$image_id" ]] && continue
+            [[ ! "$image_name" =~ ^autoBackup ]] && continue
+            
+            IS_TODAY=false
+            [[ "$created_at" =~ ^$TODAY ]] && IS_TODAY=true
+            
+            if $IS_TODAY; then
+              if [[ "$image_status" == "active" ]]; then
+                ((ACTIVE_IMAGES++)) || true
+                echo "- ✅ **${image_name}**: ${image_status}" >> $GITHUB_STEP_SUMMARY
+              elif [[ "$image_status" == "queued" || "$image_status" == "saving" ]]; then
+                ((STUCK_IMAGES++)) || true
+                echo "⚠️  STUCK: ${image_name} - Status: ${image_status}"
+                echo "- ⚠️ **${image_name}**: ${image_status} (stuck)" >> $GITHUB_STEP_SUMMARY
+              else
+                ((ERROR_IMAGES++)) || true
+                echo "❌ ERROR: ${image_name} - Status: ${image_status} - Created: ${created_at}"
+                echo "- ❌ **${image_name}**: ${image_status}" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              # Old backups that are stuck
+              if [[ "$image_status" == "queued" || "$image_status" == "saving" ]]; then
+                ((STUCK_OLD_IMAGES++)) || true
+              fi
+            fi
+          done < <(openstack image list -f json | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")')
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Summary:** ✅ Active: ${ACTIVE_IMAGES} | ⚠️ Stuck: ${STUCK_IMAGES} | ❌ Error: ${ERROR_IMAGES}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$STUCK_OLD_IMAGES" -gt 0 ]; then
+            echo "### ⚠️ Old Instance Backups Still Processing" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo ""
+            echo "========================================="
+            echo "🔴 OLD INSTANCE BACKUPS STUCK"
+            echo "========================================="
+            while IFS='|' read -r image_id image_name image_status created_at; do
+              [[ -z "$image_id" ]] && continue
+              [[ ! "$image_name" =~ ^autoBackup ]] && continue
+              [[ "$created_at" =~ ^$TODAY ]] && continue
+              if [[ "$image_status" == "queued" || "$image_status" == "saving" ]]; then
+                echo "🔴 OLD BACKUP: ${image_name} - Status: ${image_status} - Created: ${created_at}"
+                echo "- 🔴 **${image_name}**: ${image_status} (created: ${created_at})" >> $GITHUB_STEP_SUMMARY
+              fi
+            done < <(openstack image list -f json | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")')
+            echo "========================================="
+            echo ""
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check volume backups
+          echo "### Volume Backups" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          STUCK_VOLUMES=0
+          AVAILABLE_VOLUMES=0
+          ERROR_VOLUMES=0
+          STUCK_OLD_VOLUMES=0
+          
+          while IFS='|' read -r backup_id backup_name backup_status created_at; do
+            [[ -z "$backup_id" ]] && continue
+            [[ ! "$backup_name" =~ ^autoBackup ]] && continue
+            
+            IS_TODAY=false
+            [[ "$created_at" =~ ^$TODAY ]] && IS_TODAY=true
+            
+            if $IS_TODAY; then
+              if [[ "$backup_status" == "available" ]]; then
+                ((AVAILABLE_VOLUMES++)) || true
+                echo "- ✅ **${backup_name}**: ${backup_status}" >> $GITHUB_STEP_SUMMARY
+              elif [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
+                ((STUCK_VOLUMES++)) || true
+                echo "⚠️  STUCK: ${backup_name} - Status: ${backup_status}"
+                echo "- ⚠️ **${backup_name}**: ${backup_status} (stuck)" >> $GITHUB_STEP_SUMMARY
+              else
+                ((ERROR_VOLUMES++)) || true
+                echo "❌ ERROR: ${backup_name} - Status: ${backup_status} - Created: ${created_at}"
+                echo "- ❌ **${backup_name}**: ${backup_status}" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              # Old backups that are stuck
+              if [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
+                ((STUCK_OLD_VOLUMES++)) || true
+              fi
+            fi
+          done < <(openstack volume backup list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Summary:** ✅ Available: ${AVAILABLE_VOLUMES} | ⚠️ Stuck: ${STUCK_VOLUMES} | ❌ Error: ${ERROR_VOLUMES}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$STUCK_OLD_VOLUMES" -gt 0 ]; then
+            echo "### 🔴 Old Volume Backups Still Processing" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo ""
+            echo "========================================="
+            echo "🔴 OLD VOLUME BACKUPS STUCK"
+            echo "========================================="
+            while IFS='|' read -r backup_id backup_name backup_status created_at; do
+              [[ -z "$backup_id" ]] && continue
+              [[ ! "$backup_name" =~ ^autoBackup ]] && continue
+              [[ "$created_at" =~ ^$TODAY ]] && continue
+              if [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
+                echo "🔴 OLD BACKUP: ${backup_name} - Status: ${backup_status} - Created: ${created_at}"
+                echo "- 🔴 **${backup_name}**: ${backup_status} (created: ${created_at})" >> $GITHUB_STEP_SUMMARY
+              fi
+            done < <(openstack volume backup list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
+            echo "========================================="
+            echo ""
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check source volumes status (volumes with autoBackup metadata)
+          echo "### Source Volumes Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          STUCK_SOURCE_VOLUMES=0
+          
+          while IFS='|' read -r volume_id volume_name volume_status; do
+            [[ -z "$volume_id" ]] && continue
+            
+            # Get volume metadata to check for autoBackup
+            volumeData=$(openstack volume show "$volume_id" -f json 2>/dev/null || echo '{}')
+            properties=$(echo "$volumeData" | jq -r '.properties // {} | tostring')
+            
+            # Only check volumes with autoBackup metadata
+            if [[ $properties =~ "autoBackup".*"true" ]]; then
+              if [[ "$volume_status" == "creating" || "$volume_status" == "backing-up" || "$volume_status" == "deleting" || "$volume_status" == "restoring-backup" ]]; then
+                ((STUCK_SOURCE_VOLUMES++)) || true
+                echo "⚠️  STUCK SOURCE VOLUME: ${volume_name:-${volume_id:0:8}} - Status: ${volume_status}"
+                echo "- ⚠️ **${volume_name:-${volume_id:0:8}}**: ${volume_status} (source volume stuck)" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done < <(openstack volume list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
+          
+          if [ "$STUCK_SOURCE_VOLUMES" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**⚠️ Warning:** ${STUCK_SOURCE_VOLUMES} source volume(s) stuck in unstable state" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ✅ All source volumes are in stable state" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Calculate totals and determine status
+          TOTAL_STUCK=$((STUCK_IMAGES + STUCK_VOLUMES + STUCK_SOURCE_VOLUMES + STUCK_OLD_IMAGES + STUCK_OLD_VOLUMES))
+          TOTAL_ERROR=$((ERROR_IMAGES + ERROR_VOLUMES))
+          TOTAL_SUCCESS=$((ACTIVE_IMAGES + AVAILABLE_VOLUMES))
+          
+          # Set outputs for notification
+          echo "stuck_count=${TOTAL_STUCK}" >> $GITHUB_OUTPUT
+          echo "error_count=${TOTAL_ERROR}" >> $GITHUB_OUTPUT
+          echo "success_count=${TOTAL_SUCCESS}" >> $GITHUB_OUTPUT
+          echo "stuck_source_volumes=${STUCK_SOURCE_VOLUMES}" >> $GITHUB_OUTPUT
+          echo "stuck_old_backups=$((STUCK_OLD_IMAGES + STUCK_OLD_VOLUMES))" >> $GITHUB_OUTPUT
+          
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$TOTAL_ERROR" -gt 0 ]; then
+            echo "❌ **CRITICAL:** ${TOTAL_ERROR} backup(s) failed" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          elif [ "$TOTAL_STUCK" -gt 0 ]; then
+            STUCK_OLD_TOTAL=$((STUCK_OLD_IMAGES + STUCK_OLD_VOLUMES))
+            if [ "$STUCK_OLD_TOTAL" -gt 0 ]; then
+              echo "🔴 **CRITICAL:** ${STUCK_OLD_TOTAL} old backup(s) still stuck in processing state" >> $GITHUB_STEP_SUMMARY
+            fi
+            if [ "$STUCK_SOURCE_VOLUMES" -gt 0 ]; then
+              echo "⚠️ **WARNING:** ${TOTAL_STUCK} item(s) stuck (including ${STUCK_SOURCE_VOLUMES} source volume(s)) and require attention" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ **WARNING:** ${TOTAL_STUCK} backup(s) are stuck and require attention" >> $GITHUB_STEP_SUMMARY
+            fi
+            exit 1
+          elif [ "$TOTAL_SUCCESS" -eq 0 ]; then
+            echo "⚠️ **WARNING:** No backups found for today" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "✅ **SUCCESS:** All ${TOTAL_SUCCESS} backup(s) completed successfully" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Notification job - runs only on verification failure
+  notify:
+    runs-on: ubuntu-latest
+    needs: verify
+    if: failure()
+    
+    steps:
+      - name: Set notification status
+        id: status
+        run: |
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "emoji=⚠️" >> $GITHUB_OUTPUT
+          echo "color=warning" >> $GITHUB_OUTPUT
+          echo "color_hex=ffc107" >> $GITHUB_OUTPUT
+          echo "message=OpenStack backup verification failed - backups may be stuck or failed" >> $GITHUB_OUTPUT
+
+      - name: Detect notification configuration
+        id: notify_cfg
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then echo "slack=true" >> $GITHUB_OUTPUT; else echo "slack=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then echo "discord=true" >> $GITHUB_OUTPUT; else echo "discord=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${TEAMS_WEBHOOK_URL:-}" ]; then echo "teams=true" >> $GITHUB_OUTPUT; else echo "teams=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then echo "telegram=true" >> $GITHUB_OUTPUT; else echo "telegram=false" >> $GITHUB_OUTPUT; fi
+
+      # Slack notification
+      - name: Notify Slack
+        if: needs.verify.result == 'failure' && steps.notify_cfg.outputs.slack == 'true'
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*\n\n*Repository:* ${{ github.repository }}\n*Workflow:* ${{ github.workflow }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      # Discord notification
+      - name: Notify Discord
+        if: needs.verify.result == 'failure' && steps.notify_cfg.outputs.discord == 'true'
+        continue-on-error: true
+        uses: Ilshidur/action-discord@0.3.2
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        with:
+          args: "${{ steps.status.outputs.emoji }} **${{ steps.status.outputs.message }}**\n\n**Repository:** ${{ github.repository }}\n**Workflow:** ${{ github.workflow }}\n**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      # Microsoft Teams notification
+      - name: Notify Microsoft Teams
+        if: needs.verify.result == 'failure' && steps.notify_cfg.outputs.teams == 'true'
+        continue-on-error: true
+        uses: jdcargile/ms-teams-notification@v1.4
+        with:
+          github-token: ${{ github.token }}
+          ms-teams-webhook-uri: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          notification-summary: "${{ steps.status.outputs.message }}"
+          notification-color: ${{ steps.status.outputs.color_hex }}
+          timezone: UTC
+
+      # Telegram notification
+      - name: Notify Telegram
+        if: needs.verify.result == 'failure' && steps.notify_cfg.outputs.telegram == 'true'
+        continue-on-error: true
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ vars.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          format: markdown
+          message: |
+            ${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*
+            
+            *Repository:* ${{ github.repository }}
+            *Workflow:* ${{ github.workflow }}
+            *Status:* ${{ needs.verify.result }}
+            
+            [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      # GitHub issue creation
+      - name: Create issue on verification failure
+        if: needs.verify.result == 'failure' && vars.CREATE_ISSUE_ON_FAILURE == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '⚠️ OpenStack Backup Verification Failed',
+              body: `## Backup Verification Failure Report\n\n**Workflow:** ${context.workflow}\n**Run ID:** ${context.runId}\n**Date:** ${new Date().toISOString()}\n\nBackups may be stuck or failed. Please check the workflow run for details.\n\n[View Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              labels: ['backup-verification-failure', 'automated']
+            })

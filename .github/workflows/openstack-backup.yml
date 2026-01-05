@@ -42,29 +42,21 @@ jobs:
           echo "Running backup for region: ${{ matrix.region }}"
           /app/openstack-backup.sh
 
-  # Notification job - runs after all backup jobs complete
+  # Notification job - runs only on backup failure
   notify:
     runs-on: ubuntu-latest
     needs: backup
-    if: always()
+    if: failure()
     
     steps:
       - name: Set notification status
         id: status
         run: |
-          if [ "${{ needs.backup.result }}" == "success" ]; then
-            echo "status=success" >> $GITHUB_OUTPUT
-            echo "emoji=✅" >> $GITHUB_OUTPUT
-            echo "color=good" >> $GITHUB_OUTPUT
-            echo "color_hex=28a745" >> $GITHUB_OUTPUT
-            echo "message=OpenStack backup completed successfully" >> $GITHUB_OUTPUT
-          else
-            echo "status=failure" >> $GITHUB_OUTPUT
-            echo "emoji=❌" >> $GITHUB_OUTPUT
-            echo "color=danger" >> $GITHUB_OUTPUT
-            echo "color_hex=dc3545" >> $GITHUB_OUTPUT
-            echo "message=OpenStack backup failed" >> $GITHUB_OUTPUT
-          fi
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "emoji=❌" >> $GITHUB_OUTPUT
+          echo "color=danger" >> $GITHUB_OUTPUT
+          echo "color_hex=dc3545" >> $GITHUB_OUTPUT
+          echo "message=OpenStack backup failed" >> $GITHUB_OUTPUT
 
       - name: Detect notification configuration
         id: notify_cfg
@@ -80,9 +72,9 @@ jobs:
           if [ -n "${TEAMS_WEBHOOK_URL:-}" ]; then echo "teams=true" >> $GITHUB_OUTPUT; else echo "teams=false" >> $GITHUB_OUTPUT; fi
           if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then echo "telegram=true" >> $GITHUB_OUTPUT; else echo "telegram=false" >> $GITHUB_OUTPUT; fi
 
-      # Slack notification (skipped if SLACK_WEBHOOK_URL secret is not set)
+      # Slack notification (only on failure, skipped if SLACK_WEBHOOK_URL secret is not set)
       - name: Notify Slack
-        if: steps.notify_cfg.outputs.slack == 'true'
+        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.slack == 'true'
         continue-on-error: true
         uses: slackapi/slack-github-action@v1.25.0
         with:
@@ -107,9 +99,9 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
-      # Discord notification (skipped if DISCORD_WEBHOOK_URL secret is not set)
+      # Discord notification (only on failure, skipped if DISCORD_WEBHOOK_URL secret is not set)
       - name: Notify Discord
-        if: steps.notify_cfg.outputs.discord == 'true'
+        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.discord == 'true'
         continue-on-error: true
         uses: Ilshidur/action-discord@0.3.2
         env:
@@ -117,9 +109,9 @@ jobs:
         with:
           args: "${{ steps.status.outputs.emoji }} **${{ steps.status.outputs.message }}**\n\n**Repository:** ${{ github.repository }}\n**Workflow:** ${{ github.workflow }}\n**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-      # Microsoft Teams notification (skipped if TEAMS_WEBHOOK_URL secret is not set)
+      # Microsoft Teams notification (only on failure, skipped if TEAMS_WEBHOOK_URL secret is not set)
       - name: Notify Microsoft Teams
-        if: steps.notify_cfg.outputs.teams == 'true'
+        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.teams == 'true'
         continue-on-error: true
         uses: jdcargile/ms-teams-notification@v1.4
         with:
@@ -129,9 +121,9 @@ jobs:
           notification-color: ${{ steps.status.outputs.color_hex }}
           timezone: UTC
 
-      # Telegram notification (skipped if TELEGRAM_BOT_TOKEN secret or TELEGRAM_CHAT_ID variable is not set)
+      # Telegram notification (only on failure, skipped if TELEGRAM_BOT_TOKEN secret or TELEGRAM_CHAT_ID variable is not set)
       - name: Notify Telegram
-        if: steps.notify_cfg.outputs.telegram == 'true'
+        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.telegram == 'true'
         continue-on-error: true
         uses: appleboy/telegram-action@master
         with:
@@ -147,7 +139,7 @@ jobs:
             
             [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-      # Email notification (via GitHub's native notifications)
+      # GitHub issue creation (only on failure)
       - name: Create issue on failure
         if: needs.backup.result == 'failure' && vars.CREATE_ISSUE_ON_FAILURE == 'true'
         uses: actions/github-script@v7
