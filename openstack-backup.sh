@@ -15,17 +15,179 @@ set -euo pipefail
 # Specify the amount of days before the backup should be removed
 retentionDays="${RETENTION_DAYS:-14}"
 
+# Use snapshot method for volume backups (avoids --force which can get stuck)
+# Set to "true" to use snapshot -> volume -> backup method
+# Set to "false" to use direct backup with --force
+useSnapshotMethod="${USE_SNAPSHOT_METHOD:-true}"
+
+# Timeout for waiting on resources (in seconds)
+resourceTimeout="${RESOURCE_TIMEOUT:-1800}"  # 30 minutes default
+pollInterval=10  # seconds between status checks
+
 # Counters for summary
 instances_backed_up=0
 volumes_backed_up=0
 instance_backups_deleted=0
 volume_backups_deleted=0
+snapshots_created=0
+snapshots_cleaned=0
+temp_volumes_created=0
+temp_volumes_cleaned=0
 errors=0
 
 
 ###############################
 # DO NOT EDIT BELOW THIS LINE #
 ###############################
+
+# Function to wait for a resource to reach a specific status 
+wait_for_status() {
+    local resource_type="$1"  # volume, snapshot, backup
+    local resource_id="$2"
+    local target_status="$3"
+    local timeout="$4"
+    local elapsed=0
+    
+    echo "Waiting for ${resource_type} ${resource_id} to reach status '${target_status}'..."
+    
+    while [ $elapsed -lt $timeout ]; do
+        local current_status
+        case "$resource_type" in
+            "volume")
+                current_status=$(openstack volume show "$resource_id" -f value -c status 2>/dev/null || echo "error")
+                ;;
+            "snapshot")
+                current_status=$(openstack volume snapshot show "$resource_id" -f value -c status 2>/dev/null || echo "error")
+                ;;
+            "backup")
+                current_status=$(openstack volume backup show "$resource_id" -f value -c status 2>/dev/null || echo "error")
+                ;;
+            *)
+                echo "Unknown resource type: ${resource_type}"
+                return 1
+                ;;
+        esac
+        
+        if [ "$current_status" == "$target_status" ]; then
+            echo "${resource_type} ${resource_id} reached status '${target_status}'"
+            return 0
+        elif [ "$current_status" == "error" ] || [ "$current_status" == "error_deleting" ]; then
+            echo "Error: ${resource_type} ${resource_id} is in error state: ${current_status}"
+            return 1
+        fi
+        
+        sleep $pollInterval
+        elapsed=$((elapsed + pollInterval))
+    done
+    
+    echo "Timeout: ${resource_type} ${resource_id} did not reach '${target_status}' within ${timeout}s (current: ${current_status})"
+    return 1
+}
+
+# Function to cleanup temporary resources
+cleanup_temp_resources() {
+    local temp_volume_id="$1"
+    local temp_snapshot_id="$2"
+    
+    # Cleanup temporary volume
+    if [ -n "$temp_volume_id" ]; then
+        echo "Cleaning up temporary volume: ${temp_volume_id}"
+        if openstack volume delete "$temp_volume_id" 2>/dev/null; then
+            ((temp_volumes_cleaned++)) || true
+        else
+            echo "Warning: Failed to delete temporary volume ${temp_volume_id}"
+        fi
+    fi
+    
+    # Cleanup snapshot
+    if [ -n "$temp_snapshot_id" ]; then
+        echo "Cleaning up temporary snapshot: ${temp_snapshot_id}"
+        if openstack volume snapshot delete "$temp_snapshot_id" 2>/dev/null; then
+            ((snapshots_cleaned++)) || true
+        else
+            echo "Warning: Failed to delete temporary snapshot ${temp_snapshot_id}"
+        fi
+    fi
+}
+
+# Function to create volume backup using snapshot method
+create_backup_via_snapshot() {
+    local volume_id="$1"
+    local volume_name="$2"
+    local backup_name="$3"
+    
+    local temp_snapshot_id=""
+    local temp_volume_id=""
+    local backup_success=false
+    
+    # Step 1: Create snapshot of the volume
+    echo "Step 1/5: Creating snapshot of volume ${volume_name}..."
+    local snapshot_name="temp_snap_${timestamp}_${volume_name}"
+    local snapshot_output
+    snapshot_output=$(openstack volume snapshot create --volume "$volume_id" --name "$snapshot_name" -f json 2>&1) || {
+        echo "Error: Failed to create snapshot for volume ${volume_name}: ${snapshot_output}"
+        return 1
+    }
+    temp_snapshot_id=$(echo "$snapshot_output" | jq -r '.id')
+    ((snapshots_created++)) || true
+    echo "Snapshot created: ${temp_snapshot_id}"
+    
+    # Step 2: Wait for snapshot to be available
+    echo "Step 2/5: Waiting for snapshot to be available..."
+    if ! wait_for_status "snapshot" "$temp_snapshot_id" "available" "$resourceTimeout"; then
+        echo "Error: Snapshot did not become available"
+        cleanup_temp_resources "" "$temp_snapshot_id"
+        return 1
+    fi
+    
+    # Step 3: Create volume from snapshot
+    echo "Step 3/5: Creating temporary volume from snapshot..."
+    local temp_volume_name="temp_vol_${timestamp}_${volume_name}"
+    local volume_output
+    volume_output=$(openstack volume create --snapshot "$temp_snapshot_id" --name "$temp_volume_name" -f json 2>&1) || {
+        echo "Error: Failed to create volume from snapshot: ${volume_output}"
+        cleanup_temp_resources "" "$temp_snapshot_id"
+        return 1
+    }
+    temp_volume_id=$(echo "$volume_output" | jq -r '.id')
+    ((temp_volumes_created++)) || true
+    echo "Temporary volume created: ${temp_volume_id}"
+    
+    # Step 4: Wait for volume to be available
+    echo "Step 4/5: Waiting for temporary volume to be available..."
+    if ! wait_for_status "volume" "$temp_volume_id" "available" "$resourceTimeout"; then
+        echo "Error: Temporary volume did not become available"
+        cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
+        return 1
+    fi
+    
+    # Step 5: Create backup from temporary volume (no --force needed)
+    echo "Step 5/5: Creating backup from temporary volume..."
+    local backup_output
+    backup_output=$(openstack volume backup create "$temp_volume_id" --name "$backup_name" -f json 2>&1) && backup_success=true || backup_success=false
+    
+    if $backup_success; then
+        local backup_id
+        backup_id=$(echo "$backup_output" | jq -r '.id')
+        echo "Backup initiated: ${backup_id}"
+        
+        # Wait for backup to complete before cleanup
+        echo "Waiting for backup to complete before cleanup..."
+        if wait_for_status "backup" "$backup_id" "available" "$resourceTimeout"; then
+            echo "Backup completed successfully: ${backup_name}"
+            cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
+            return 0
+        else
+            echo "Warning: Backup may still be in progress, cleaning up temporary resources anyway"
+            cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
+            return 0  # Backup was initiated, consider it a success
+        fi
+    else
+        echo "Error: Failed to create backup: ${backup_output}"
+        cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
+        return 1
+    fi
+}
 
 # Set Variables
 date=$(date +"%Y-%m-%d")
@@ -154,12 +316,38 @@ while IFS='|' read -r volume volumeName; do
             ((errors++)) || true
             continue
         fi
-        backupError=$(openstack volume backup create "${volume}" --name "autoBackup_${timestamp}_${volumeName}" --force 2>&1) && backupSuccess=true || backupSuccess=false
-        if $backupSuccess; then
-            ((volumes_backed_up++)) || true
+        
+        backupName="autoBackup_${timestamp}_${volumeName}"
+        
+        if [[ "$useSnapshotMethod" == "true" && "$volumeStatus" == "in-use" ]]; then
+            # Use snapshot method for attached volumes (avoids --force which can get stuck)
+            echo "Using snapshot method for attached volume ${volumeName}"
+            if create_backup_via_snapshot "$volume" "$volumeName" "$backupName"; then
+                ((volumes_backed_up++)) || true
+            else
+                echo "Error: Snapshot-based backup failed for volume ${volumeName}"
+                ((errors++)) || true
+            fi
+        elif [[ "$volumeStatus" == "available" ]]; then
+            # Direct backup for detached volumes (no --force needed)
+            echo "Creating direct backup for detached volume ${volumeName}"
+            backupError=$(openstack volume backup create "${volume}" --name "$backupName" 2>&1) && backupSuccess=true || backupSuccess=false
+            if $backupSuccess; then
+                ((volumes_backed_up++)) || true
+            else
+                echo "Error: Failed to create backup for volume ${volumeName}: ${backupError}"
+                ((errors++)) || true
+            fi
         else
-            echo "Error: Failed to create backup for volume ${volumeName}: ${backupError}"
-            ((errors++)) || true
+            # Fallback to --force method if snapshot method is disabled
+            echo "Using --force method for volume ${volumeName} (status: ${volumeStatus})"
+            backupError=$(openstack volume backup create "${volume}" --name "$backupName" --force 2>&1) && backupSuccess=true || backupSuccess=false
+            if $backupSuccess; then
+                ((volumes_backed_up++)) || true
+            else
+                echo "Error: Failed to create backup for volume ${volumeName}: ${backupError}"
+                ((errors++)) || true
+            fi
         fi
     else
         echo "Skipping volume (no autoBackup metadata): ${volumeName} - ${volume}"
@@ -241,6 +429,10 @@ echo "Instances backed up: ${instances_backed_up}"
 echo "Volumes backed up:   ${volumes_backed_up}"
 echo "Instance backups deleted: ${instance_backups_deleted}"
 echo "Volume backups deleted:   ${volume_backups_deleted}"
+if [[ "$useSnapshotMethod" == "true" ]]; then
+    echo "Snapshots created/cleaned: ${snapshots_created}/${snapshots_cleaned}"
+    echo "Temp volumes created/cleaned: ${temp_volumes_created}/${temp_volumes_cleaned}"
+fi
 echo "Errors: ${errors}"
 printf '%s\n' "----------------------------------------"
 
@@ -263,6 +455,8 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 | 💾 Volumes backed up | ${volumes_backed_up} |
 | 🗑️ Instance backups deleted | ${instance_backups_deleted} |
 | 🗑️ Volume backups deleted | ${volume_backups_deleted} |
+| 📸 Snapshots (created/cleaned) | ${snapshots_created}/${snapshots_cleaned} |
+| 📦 Temp volumes (created/cleaned) | ${temp_volumes_created}/${temp_volumes_cleaned} |
 | ⚠️ Errors | ${errors} |
 
 **Status:** ${status_text}  

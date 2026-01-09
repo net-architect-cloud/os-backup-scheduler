@@ -42,6 +42,8 @@ Go to **Settings** → **Secrets and variables** → **Actions** → **Variables
 | `OS_PROJECT_DOMAIN_NAME` | Project domain name | `default` |
 | `OS_IDENTITY_API_VERSION` | Identity API version | `3` |
 | `RETENTION_DAYS` | Days to retain backups (optional) | `14` |
+| `USE_SNAPSHOT_METHOD` | Use snapshot method for attached volumes (optional) | `true` |
+| `RESOURCE_TIMEOUT` | Timeout in seconds for snapshot operations (optional) | `1800` |
 
 ### 4. Configure regions
 
@@ -71,7 +73,9 @@ openstack volume set --property autoBackup='true' <volume-name-or-id>
 |---------------|---------------|
 | **Boot-from-image instance** | `openstack server backup create` (creates image snapshot) |
 | **Boot-from-volume instance** | Skipped (backup the volume directly) |
-| **Volume** | `openstack volume backup create --force` |
+| **Volume (detached)** | `openstack volume backup create` (direct backup) |
+| **Volume (attached)** | Snapshot → Temp volume → Backup → Cleanup (default) |
+| **Volume (attached, legacy)** | `openstack volume backup create --force` (if `USE_SNAPSHOT_METHOD=false`) |
 
 ### Backup naming convention
 
@@ -103,6 +107,27 @@ The verification workflow (4 hours later) detects:
 - Failed backups with error status
 
 ## 🔧 Configuration
+
+### Volume Backup Method
+
+By default, attached volumes (`in-use` status) are backed up using the **snapshot method**:
+
+1. Create a snapshot of the attached volume
+2. Create a temporary volume from the snapshot
+3. Create a backup from the temporary volume (no `--force` needed)
+4. Cleanup temporary volume and snapshot
+
+This avoids the `--force` flag which can cause backups to get stuck on some OpenStack deployments.
+
+To use the legacy `--force` method instead:
+```bash
+export USE_SNAPSHOT_METHOD=false
+```
+
+You can also configure the timeout for snapshot operations (default: 1800 seconds / 30 minutes):
+```bash
+export RESOURCE_TIMEOUT=3600  # 1 hour
+```
 
 ### Retention
 
