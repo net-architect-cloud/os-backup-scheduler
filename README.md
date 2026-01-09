@@ -43,7 +43,7 @@ Go to **Settings** → **Secrets and variables** → **Actions** → **Variables
 | `OS_IDENTITY_API_VERSION` | Identity API version | `3` |
 | `RETENTION_DAYS` | Days to retain backups (optional) | `14` |
 | `USE_SNAPSHOT_METHOD` | Use snapshot method for attached volumes (optional) | `true` |
-| `RESOURCE_TIMEOUT` | Timeout in seconds for snapshot operations (optional) | `1800` |
+| `RESOURCE_TIMEOUT` | Timeout in seconds for snapshot operations (optional) | `3600` |
 
 ### 4. Configure regions
 
@@ -124,9 +124,9 @@ To use the legacy `--force` method instead:
 export USE_SNAPSHOT_METHOD=false
 ```
 
-You can also configure the timeout for snapshot operations (default: 1800 seconds / 30 minutes):
+You can also configure the timeout for snapshot operations (default: 3600 seconds / 60 minutes):
 ```bash
-export RESOURCE_TIMEOUT=3600  # 1 hour
+export RESOURCE_TIMEOUT=7200  # 2 hours
 ```
 
 ### Retention

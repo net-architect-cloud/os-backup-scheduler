@@ -21,7 +21,7 @@ retentionDays="${RETENTION_DAYS:-14}"
 useSnapshotMethod="${USE_SNAPSHOT_METHOD:-true}"
 
 # Timeout for waiting on resources (in seconds)
-resourceTimeout="${RESOURCE_TIMEOUT:-1800}"  # 30 minutes default
+resourceTimeout="${RESOURCE_TIMEOUT:-3600}"  # 60 minutes default
 pollInterval=10  # seconds between status checks
 
 # Counters for summary
