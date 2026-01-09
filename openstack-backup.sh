@@ -144,7 +144,7 @@ create_backup_via_snapshot() {
     echo "Step 3/5: Creating temporary volume from snapshot..."
     local temp_volume_name="temp_vol_${timestamp}_${volume_name}"
     local volume_output
-    volume_output=$(openstack volume create --snapshot "$temp_snapshot_id" --name "$temp_volume_name" -f json 2>&1) || {
+    volume_output=$(openstack volume create --snapshot "$temp_snapshot_id" -f json "$temp_volume_name" 2>&1) || {
         echo "Error: Failed to create volume from snapshot: ${volume_output}"
         cleanup_temp_resources "" "$temp_snapshot_id"
         return 1
