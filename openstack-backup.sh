@@ -120,11 +120,11 @@ create_backup_via_snapshot() {
     local temp_volume_id=""
     local backup_success=false
     
-    # Step 1: Create snapshot of the volume
+    # Step 1: Create snapshot of the volume (--force needed for in-use volumes)
     echo "Step 1/5: Creating snapshot of volume ${volume_name}..."
     local snapshot_name="temp_snap_${timestamp}_${volume_name}"
     local snapshot_output
-    snapshot_output=$(openstack volume snapshot create --volume "$volume_id" -f json "$snapshot_name" 2>&1) || {
+    snapshot_output=$(openstack volume snapshot create --volume "$volume_id" --force -f json "$snapshot_name" 2>&1) || {
         echo "Error: Failed to create snapshot for volume ${volume_name}: ${snapshot_output}"
         return 1
     }
