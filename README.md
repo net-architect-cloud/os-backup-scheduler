@@ -43,6 +43,7 @@ Go to **Settings** → **Secrets and variables** → **Actions** → **Variables
 | `OS_IDENTITY_API_VERSION` | Identity API version | `3` |
 | `RETENTION_DAYS` | Days to retain backups (optional) | `14` |
 | `USE_SNAPSHOT_METHOD` | Use snapshot method for attached volumes (optional) | `true` |
+| `WAIT_FOR_BACKUP` | Wait for backup completion before continuing (optional) | `false` |
 | `RESOURCE_TIMEOUT` | Timeout in seconds for snapshot operations (optional) | `3600` |
 
 ### 4. Configure regions
@@ -118,6 +119,17 @@ By default, attached volumes (`in-use` status) are backed up using the **snapsho
 4. Cleanup temporary volume and snapshot
 
 This avoids the `--force` flag which can cause backups to get stuck on some OpenStack deployments.
+
+**Async mode (default):** By default, the backup job does **not wait** for backups to complete. It launches the backup and continues immediately. The verification workflow (4 hours later) will:
+1. Check that all backups completed successfully
+2. **Cleanup temporary volumes and snapshots** created during the backup
+
+This significantly reduces backup job duration.
+
+To wait for backup completion (synchronous mode):
+```bash
+export WAIT_FOR_BACKUP=true
+```
 
 To use the legacy `--force` method instead:
 ```bash

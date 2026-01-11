@@ -20,6 +20,10 @@ retentionDays="${RETENTION_DAYS:-14}"
 # Set to "false" to use direct backup with --force
 useSnapshotMethod="${USE_SNAPSHOT_METHOD:-true}"
 
+# Wait for backup completion before cleanup (set to false for async mode)
+# When false, cleanup is deferred to the verification workflow
+waitForBackup="${WAIT_FOR_BACKUP:-false}"
+
 # Timeout for waiting on resources (in seconds)
 resourceTimeout="${RESOURCE_TIMEOUT:-3600}"  # 60 minutes default
 pollInterval=10  # seconds between status checks
@@ -171,16 +175,25 @@ create_backup_via_snapshot() {
         backup_id=$(echo "$backup_output" | jq -r '.id')
         echo "Backup initiated: ${backup_id}"
         
-        # Wait for backup to complete before cleanup
-        echo "Waiting for backup to complete before cleanup..."
-        if wait_for_status "backup" "$backup_id" "available" "$resourceTimeout"; then
-            echo "Backup completed successfully: ${backup_name}"
-            cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
-            return 0
+        if [[ "$waitForBackup" == "true" ]]; then
+            # Synchronous mode: Wait for backup to complete before cleanup
+            echo "Waiting for backup to complete before cleanup..."
+            if wait_for_status "backup" "$backup_id" "available" "$resourceTimeout"; then
+                echo "Backup completed successfully: ${backup_name}"
+                cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
+                return 0
+            else
+                echo "Warning: Backup may still be in progress, cleaning up temporary resources anyway"
+                cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
+                return 0  # Backup was initiated, consider it a success
+            fi
         else
-            echo "Warning: Backup may still be in progress, cleaning up temporary resources anyway"
-            cleanup_temp_resources "$temp_volume_id" "$temp_snapshot_id"
-            return 0  # Backup was initiated, consider it a success
+            # Async mode: Don't wait, cleanup will be done by verification workflow
+            echo "Async mode: Backup initiated, cleanup will be done by verification workflow"
+            echo "  - Temp snapshot: ${temp_snapshot_id} (${snapshot_name})"
+            echo "  - Temp volume: ${temp_volume_id} (${temp_volume_name})"
+            echo "  - Backup: ${backup_id} (${backup_name})"
+            return 0
         fi
     else
         echo "Error: Failed to create backup: ${backup_output}"
