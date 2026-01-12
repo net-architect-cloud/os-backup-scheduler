@@ -110,33 +110,39 @@ jobs:
           ERROR_VOLUMES=0
           STUCK_OLD_VOLUMES=0
           
-          while IFS='|' read -r backup_id backup_name backup_status created_at; do
-            [[ -z "$backup_id" ]] && continue
-            [[ ! "$backup_name" =~ ^autoBackup ]] && continue
-            
-            IS_TODAY=false
-            [[ "$created_at" =~ ^$TODAY ]] && IS_TODAY=true
-            
-            if $IS_TODAY; then
-              if [[ "$backup_status" == "available" ]]; then
-                ((AVAILABLE_VOLUMES++)) || true
-                echo "- ✅ **${backup_name}**: ${backup_status}" >> $GITHUB_STEP_SUMMARY
-              elif [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
-                ((STUCK_VOLUMES++)) || true
-                echo "⚠️  STUCK: ${backup_name} - Status: ${backup_status}"
-                echo "- ⚠️ **${backup_name}**: ${backup_status} (stuck)" >> $GITHUB_STEP_SUMMARY
+          # Check if volume service is available
+          VOLUME_BACKUPS_JSON=$(openstack volume backup list -f json 2>/dev/null || echo '[]')
+          if [[ "$VOLUME_BACKUPS_JSON" == "[]" ]] || [[ -z "$VOLUME_BACKUPS_JSON" ]]; then
+            echo "- ℹ️ No volume backups found in this region" >> $GITHUB_STEP_SUMMARY
+          else
+            while IFS='|' read -r backup_id backup_name backup_status created_at; do
+              [[ -z "$backup_id" ]] && continue
+              [[ ! "$backup_name" =~ ^autoBackup ]] && continue
+              
+              IS_TODAY=false
+              [[ "$created_at" =~ ^$TODAY ]] && IS_TODAY=true
+              
+              if $IS_TODAY; then
+                if [[ "$backup_status" == "available" ]]; then
+                  ((AVAILABLE_VOLUMES++)) || true
+                  echo "- ✅ **${backup_name}**: ${backup_status}" >> $GITHUB_STEP_SUMMARY
+                elif [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
+                  ((STUCK_VOLUMES++)) || true
+                  echo "⚠️  STUCK: ${backup_name} - Status: ${backup_status}"
+                  echo "- ⚠️ **${backup_name}**: ${backup_status} (stuck)" >> $GITHUB_STEP_SUMMARY
+                else
+                  ((ERROR_VOLUMES++)) || true
+                  echo "❌ ERROR: ${backup_name} - Status: ${backup_status} - Created: ${created_at}"
+                  echo "- ❌ **${backup_name}**: ${backup_status}" >> $GITHUB_STEP_SUMMARY
+                fi
               else
-                ((ERROR_VOLUMES++)) || true
-                echo "❌ ERROR: ${backup_name} - Status: ${backup_status} - Created: ${created_at}"
-                echo "- ❌ **${backup_name}**: ${backup_status}" >> $GITHUB_STEP_SUMMARY
+                # Old backups that are stuck
+                if [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
+                  ((STUCK_OLD_VOLUMES++)) || true
+                fi
               fi
-            else
-              # Old backups that are stuck
-              if [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
-                ((STUCK_OLD_VOLUMES++)) || true
-              fi
-            fi
-          done < <(openstack volume backup list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
+            done < <(echo "$VOLUME_BACKUPS_JSON" | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
+          fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Summary:** ✅ Available: ${AVAILABLE_VOLUMES} | ⚠️ Stuck: ${STUCK_VOLUMES} | ❌ Error: ${ERROR_VOLUMES}" >> $GITHUB_STEP_SUMMARY
@@ -149,15 +155,17 @@ jobs:
             echo "========================================="
             echo "🔴 OLD VOLUME BACKUPS STUCK"
             echo "========================================="
-            while IFS='|' read -r backup_id backup_name backup_status created_at; do
-              [[ -z "$backup_id" ]] && continue
-              [[ ! "$backup_name" =~ ^autoBackup ]] && continue
-              [[ "$created_at" =~ ^$TODAY ]] && continue
-              if [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
-                echo "🔴 OLD BACKUP: ${backup_name} - Status: ${backup_status} - Created: ${created_at}"
-                echo "- 🔴 **${backup_name}**: ${backup_status} (created: ${created_at})" >> $GITHUB_STEP_SUMMARY
-              fi
-            done < <(openstack volume backup list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
+            if [[ "$VOLUME_BACKUPS_JSON" != "[]" ]] && [[ -n "$VOLUME_BACKUPS_JSON" ]]; then
+              while IFS='|' read -r backup_id backup_name backup_status created_at; do
+                [[ -z "$backup_id" ]] && continue
+                [[ ! "$backup_name" =~ ^autoBackup ]] && continue
+                [[ "$created_at" =~ ^$TODAY ]] && continue
+                if [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
+                  echo "🔴 OLD BACKUP: ${backup_name} - Status: ${backup_status} - Created: ${created_at}"
+                  echo "- 🔴 **${backup_name}**: ${backup_status} (created: ${created_at})" >> $GITHUB_STEP_SUMMARY
+                fi
+              done < <(echo "$VOLUME_BACKUPS_JSON" | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
+            fi
             echo "========================================="
             echo ""
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -169,22 +177,28 @@ jobs:
           
           STUCK_SOURCE_VOLUMES=0
           
-          while IFS='|' read -r volume_id volume_name volume_status; do
-            [[ -z "$volume_id" ]] && continue
-            
-            # Get volume metadata to check for autoBackup
-            volumeData=$(openstack volume show "$volume_id" -f json 2>/dev/null || echo '{}')
-            properties=$(echo "$volumeData" | jq -r '.properties // {} | tostring')
-            
-            # Only check volumes with autoBackup metadata
-            if [[ $properties =~ "autoBackup".*"true" ]]; then
-              if [[ "$volume_status" == "creating" || "$volume_status" == "backing-up" || "$volume_status" == "deleting" || "$volume_status" == "restoring-backup" ]]; then
-                ((STUCK_SOURCE_VOLUMES++)) || true
-                echo "⚠️  STUCK SOURCE VOLUME: ${volume_name:-${volume_id:0:8}} - Status: ${volume_status}"
-                echo "- ⚠️ **${volume_name:-${volume_id:0:8}}**: ${volume_status} (source volume stuck)" >> $GITHUB_STEP_SUMMARY
+          # Check if volume service is available
+          VOLUMES_JSON=$(openstack volume list -f json 2>/dev/null || echo '[]')
+          if [[ "$VOLUMES_JSON" == "[]" ]] || [[ -z "$VOLUMES_JSON" ]]; then
+            echo "- ℹ️ No volumes found in this region" >> $GITHUB_STEP_SUMMARY
+          else
+            while IFS='|' read -r volume_id volume_name volume_status; do
+              [[ -z "$volume_id" ]] && continue
+              
+              # Get volume metadata to check for autoBackup
+              volumeData=$(openstack volume show "$volume_id" -f json 2>/dev/null || echo '{}')
+              properties=$(echo "$volumeData" | jq -r '.properties // {} | tostring')
+              
+              # Only check volumes with autoBackup metadata
+              if [[ $properties =~ "autoBackup".*"true" ]]; then
+                if [[ "$volume_status" == "creating" || "$volume_status" == "backing-up" || "$volume_status" == "deleting" || "$volume_status" == "restoring-backup" ]]; then
+                  ((STUCK_SOURCE_VOLUMES++)) || true
+                  echo "⚠️  STUCK SOURCE VOLUME: ${volume_name:-${volume_id:0:8}} - Status: ${volume_status}"
+                  echo "- ⚠️ **${volume_name:-${volume_id:0:8}}**: ${volume_status} (source volume stuck)" >> $GITHUB_STEP_SUMMARY
+                fi
               fi
-            fi
-          done < <(openstack volume list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
+            done < <(echo "$VOLUMES_JSON" | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
+          fi
           
           if [ "$STUCK_SOURCE_VOLUMES" -gt 0 ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -204,14 +218,15 @@ jobs:
           
           # Find and cleanup temporary volumes (temp_vol_*)
           echo "Checking for temporary volumes to cleanup..."
-          while IFS='|' read -r vol_id vol_name vol_status; do
-            [[ -z "$vol_id" ]] && continue
-            [[ ! "$vol_name" =~ ^temp_vol_ ]] && continue
-            
-            # Check if volume is available (backup completed)
-            if [[ "$vol_status" == "available" ]]; then
-              echo "Cleaning up temporary volume: ${vol_name} (${vol_id})"
-              if openstack volume delete "$vol_id" 2>/dev/null; then
+          if [[ "$VOLUMES_JSON" != "[]" ]] && [[ -n "$VOLUMES_JSON" ]]; then
+            while IFS='|' read -r vol_id vol_name vol_status; do
+              [[ -z "$vol_id" ]] && continue
+              [[ ! "$vol_name" =~ ^temp_vol_ ]] && continue
+              
+              # Check if volume is available (backup completed)
+              if [[ "$vol_status" == "available" ]]; then
+                echo "Cleaning up temporary volume: ${vol_name} (${vol_id})"
+                if openstack volume delete "$vol_id" 2>/dev/null; then
                 ((TEMP_VOLUMES_CLEANED++)) || true
                 echo "- 🗑️ Deleted temp volume: ${vol_name}" >> $GITHUB_STEP_SUMMARY
               else
@@ -222,7 +237,8 @@ jobs:
               echo "Skipping temporary volume (still in use): ${vol_name} - Status: ${vol_status}"
               echo "- ⏳ Temp volume still in use: ${vol_name} (${vol_status})" >> $GITHUB_STEP_SUMMARY
             fi
-          done < <(openstack volume list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
+            done < <(echo "$VOLUMES_JSON" | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
+          fi
           
           # Find and cleanup temporary snapshots (temp_snap_*)
           echo "Checking for temporary snapshots to cleanup..."
