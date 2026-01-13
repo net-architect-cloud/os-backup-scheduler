@@ -1,4 +1,4 @@
-FROM rockylinux:9
+FROM rockylinux/rockylinux:10-ubi-init
 
 LABEL maintainer="Net Architect"
 LABEL description="OpenStack Automatic Backup - Automated backup solution for OpenStack instances and volumes"
