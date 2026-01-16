@@ -39,6 +39,41 @@ jobs:
           # Get today's date for filtering
           TODAY=$(date +"%Y-%m-%d")
           
+          # Count resources with autoBackup metadata to know if backups are expected
+          EXPECTED_INSTANCE_BACKUPS=0
+          EXPECTED_VOLUME_BACKUPS=0
+          
+          # Count instances with autoBackup=true (boot-from-image only)
+          while IFS='|' read -r instance_id instance_name; do
+            [[ -z "$instance_id" ]] && continue
+            instanceData=$(openstack server show "$instance_id" -f json 2>/dev/null || echo '{}')
+            properties=$(echo "$instanceData" | jq -r '.properties // {} | tostring')
+            imageField=$(echo "$instanceData" | jq -r '.image // ""')
+            volumesAttached=$(echo "$instanceData" | jq -r '.volumes_attached // []')
+            
+            if [[ $properties =~ "autoBackup".*"true" ]]; then
+              # Only count boot-from-image instances
+              if [[ ! "$imageField" == *"booted from volume"* && -n "$imageField" && "$imageField" != "null" ]] || [[ "$volumesAttached" == "[]" ]]; then
+                ((EXPECTED_INSTANCE_BACKUPS++)) || true
+              fi
+            fi
+          done < <(openstack server list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name] | join("|")' 2>/dev/null || true)
+          
+          # Count volumes with autoBackup=true
+          while IFS='|' read -r volume_id volume_name; do
+            [[ -z "$volume_id" ]] && continue
+            volumeData=$(openstack volume show "$volume_id" -f json 2>/dev/null || echo '{}')
+            properties=$(echo "$volumeData" | jq -r '.properties // {} | tostring')
+            
+            if [[ $properties =~ "autoBackup".*"true" ]]; then
+              ((EXPECTED_VOLUME_BACKUPS++)) || true
+            fi
+          done < <(openstack volume list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name] | join("|")' 2>/dev/null || true)
+          
+          TOTAL_EXPECTED=$((EXPECTED_INSTANCE_BACKUPS + EXPECTED_VOLUME_BACKUPS))
+          echo "**Expected backups:** ${EXPECTED_INSTANCE_BACKUPS} instance(s), ${EXPECTED_VOLUME_BACKUPS} volume(s)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
           # Check instance backups (images)
           echo "### Instance Backups (Images) - Today" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -300,8 +335,11 @@ jobs:
               echo "⚠️ **WARNING:** ${TOTAL_STUCK} backup(s) are stuck and require attention" >> $GITHUB_STEP_SUMMARY
             fi
             exit 1
+          elif [ "$TOTAL_EXPECTED" -eq 0 ]; then
+            # No resources with autoBackup in this region - this is OK
+            echo "ℹ️ **INFO:** No resources with autoBackup metadata in this region - nothing to verify" >> $GITHUB_STEP_SUMMARY
           elif [ "$TOTAL_SUCCESS" -eq 0 ]; then
-            echo "⚠️ **WARNING:** No backups found for today" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **WARNING:** No backups found for today (expected: ${TOTAL_EXPECTED})" >> $GITHUB_STEP_SUMMARY
             exit 1
           else
             echo "✅ **SUCCESS:** All ${TOTAL_SUCCESS} backup(s) completed successfully" >> $GITHUB_STEP_SUMMARY
