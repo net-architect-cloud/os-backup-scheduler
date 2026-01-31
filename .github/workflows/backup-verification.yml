@@ -87,8 +87,14 @@ jobs:
             [[ -z "$image_id" ]] && continue
             [[ ! "$image_name" =~ ^autoBackup ]] && continue
             
+            # Check if backup is from today using the date in the backup name (autoBackup_YYYY-MM-DD_...)
+            # or fallback to Created At field if available
             IS_TODAY=false
-            [[ "$created_at" =~ ^$TODAY ]] && IS_TODAY=true
+            if [[ "$image_name" =~ ^autoBackup_${TODAY}_ ]]; then
+              IS_TODAY=true
+            elif [[ -n "$created_at" && "$created_at" =~ ^$TODAY ]]; then
+              IS_TODAY=true
+            fi
             
             if $IS_TODAY; then
               if [[ "$image_status" == "active" ]]; then
@@ -125,7 +131,9 @@ jobs:
             while IFS='|' read -r image_id image_name image_status created_at; do
               [[ -z "$image_id" ]] && continue
               [[ ! "$image_name" =~ ^autoBackup ]] && continue
-              [[ "$created_at" =~ ^$TODAY ]] && continue
+              # Skip today's backups (check name pattern first, then Created At)
+              [[ "$image_name" =~ ^autoBackup_${TODAY}_ ]] && continue
+              [[ -n "$created_at" && "$created_at" =~ ^$TODAY ]] && continue
               if [[ "$image_status" == "queued" || "$image_status" == "saving" ]]; then
                 echo "🔴 OLD BACKUP: ${image_name} - Status: ${image_status} - Created: ${created_at}"
                 echo "- 🔴 **${image_name}**: ${image_status} (created: ${created_at})" >> $GITHUB_STEP_SUMMARY
@@ -154,8 +162,14 @@ jobs:
               [[ -z "$backup_id" ]] && continue
               [[ ! "$backup_name" =~ ^autoBackup ]] && continue
               
+              # Check if backup is from today using the date in the backup name (autoBackup_YYYY-MM-DD_...)
+              # or fallback to Created At field if available
               IS_TODAY=false
-              [[ "$created_at" =~ ^$TODAY ]] && IS_TODAY=true
+              if [[ "$backup_name" =~ ^autoBackup_${TODAY}_ ]]; then
+                IS_TODAY=true
+              elif [[ -n "$created_at" && "$created_at" =~ ^$TODAY ]]; then
+                IS_TODAY=true
+              fi
               
               if $IS_TODAY; then
                 if [[ "$backup_status" == "available" ]]; then
@@ -194,7 +208,9 @@ jobs:
               while IFS='|' read -r backup_id backup_name backup_status created_at; do
                 [[ -z "$backup_id" ]] && continue
                 [[ ! "$backup_name" =~ ^autoBackup ]] && continue
-                [[ "$created_at" =~ ^$TODAY ]] && continue
+                # Skip today's backups (check name pattern first, then Created At)
+                [[ "$backup_name" =~ ^autoBackup_${TODAY}_ ]] && continue
+                [[ -n "$created_at" && "$created_at" =~ ^$TODAY ]] && continue
                 if [[ "$backup_status" == "creating" || "$backup_status" == "backing-up" ]]; then
                   echo "🔴 OLD BACKUP: ${backup_name} - Status: ${backup_status} - Created: ${created_at}"
                   echo "- 🔴 **${backup_name}**: ${backup_status} (created: ${created_at})" >> $GITHUB_STEP_SUMMARY
