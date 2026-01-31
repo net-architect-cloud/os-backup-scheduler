@@ -109,7 +109,7 @@ jobs:
                 ((STUCK_OLD_IMAGES++)) || true
               fi
             fi
-          done < <(openstack image list -f json | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")')
+          done < <(openstack image list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Summary:** ✅ Active: ${ACTIVE_IMAGES} | ⚠️ Stuck: ${STUCK_IMAGES} | ❌ Error: ${ERROR_IMAGES}" >> $GITHUB_STEP_SUMMARY
@@ -130,7 +130,7 @@ jobs:
                 echo "🔴 OLD BACKUP: ${image_name} - Status: ${image_status} - Created: ${created_at}"
                 echo "- 🔴 **${image_name}**: ${image_status} (created: ${created_at})" >> $GITHUB_STEP_SUMMARY
               fi
-            done < <(openstack image list -f json | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")')
+            done < <(openstack image list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status, ."Created At" // .created_at // ""] | join("|")' 2>/dev/null || true)
             echo "========================================="
             echo ""
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -262,40 +262,43 @@ jobs:
               if [[ "$vol_status" == "available" ]]; then
                 echo "Cleaning up temporary volume: ${vol_name} (${vol_id})"
                 if openstack volume delete "$vol_id" 2>/dev/null; then
-                ((TEMP_VOLUMES_CLEANED++)) || true
-                echo "- 🗑️ Deleted temp volume: ${vol_name}" >> $GITHUB_STEP_SUMMARY
-              else
-                ((TEMP_CLEANUP_ERRORS++)) || true
-                echo "- ❌ Failed to delete temp volume: ${vol_name}" >> $GITHUB_STEP_SUMMARY
+                  ((TEMP_VOLUMES_CLEANED++)) || true
+                  echo "- 🗑️ Deleted temp volume: ${vol_name}" >> $GITHUB_STEP_SUMMARY
+                else
+                  ((TEMP_CLEANUP_ERRORS++)) || true
+                  echo "- ❌ Failed to delete temp volume: ${vol_name}" >> $GITHUB_STEP_SUMMARY
+                fi
+              elif [[ "$vol_status" == "in-use" || "$vol_status" == "creating" ]]; then
+                echo "Skipping temporary volume (still in use): ${vol_name} - Status: ${vol_status}"
+                echo "- ⏳ Temp volume still in use: ${vol_name} (${vol_status})" >> $GITHUB_STEP_SUMMARY
               fi
-            elif [[ "$vol_status" == "in-use" || "$vol_status" == "creating" ]]; then
-              echo "Skipping temporary volume (still in use): ${vol_name} - Status: ${vol_status}"
-              echo "- ⏳ Temp volume still in use: ${vol_name} (${vol_status})" >> $GITHUB_STEP_SUMMARY
-            fi
             done < <(echo "$VOLUMES_JSON" | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
           fi
           
           # Find and cleanup temporary snapshots (temp_snap_*)
           echo "Checking for temporary snapshots to cleanup..."
-          while IFS='|' read -r snap_id snap_name snap_status; do
-            [[ -z "$snap_id" ]] && continue
-            [[ ! "$snap_name" =~ ^temp_snap_ ]] && continue
-            
-            # Check if snapshot is available and no volumes depend on it
-            if [[ "$snap_status" == "available" ]]; then
-              echo "Cleaning up temporary snapshot: ${snap_name} (${snap_id})"
-              if openstack volume snapshot delete "$snap_id" 2>/dev/null; then
-                ((TEMP_SNAPSHOTS_CLEANED++)) || true
-                echo "- 🗑️ Deleted temp snapshot: ${snap_name}" >> $GITHUB_STEP_SUMMARY
-              else
-                ((TEMP_CLEANUP_ERRORS++)) || true
-                echo "- ❌ Failed to delete temp snapshot: ${snap_name}" >> $GITHUB_STEP_SUMMARY
+          SNAPSHOTS_JSON=$(openstack volume snapshot list -f json 2>/dev/null || echo '[]')
+          if [[ "$SNAPSHOTS_JSON" != "[]" ]] && [[ -n "$SNAPSHOTS_JSON" ]]; then
+            while IFS='|' read -r snap_id snap_name snap_status; do
+              [[ -z "$snap_id" ]] && continue
+              [[ ! "$snap_name" =~ ^temp_snap_ ]] && continue
+              
+              # Check if snapshot is available and no volumes depend on it
+              if [[ "$snap_status" == "available" ]]; then
+                echo "Cleaning up temporary snapshot: ${snap_name} (${snap_id})"
+                if openstack volume snapshot delete "$snap_id" 2>/dev/null; then
+                  ((TEMP_SNAPSHOTS_CLEANED++)) || true
+                  echo "- 🗑️ Deleted temp snapshot: ${snap_name}" >> $GITHUB_STEP_SUMMARY
+                else
+                  ((TEMP_CLEANUP_ERRORS++)) || true
+                  echo "- ❌ Failed to delete temp snapshot: ${snap_name}" >> $GITHUB_STEP_SUMMARY
+                fi
+              elif [[ "$snap_status" == "creating" || "$snap_status" == "deleting" ]]; then
+                echo "Skipping temporary snapshot (busy): ${snap_name} - Status: ${snap_status}"
+                echo "- ⏳ Temp snapshot busy: ${snap_name} (${snap_status})" >> $GITHUB_STEP_SUMMARY
               fi
-            elif [[ "$snap_status" == "creating" || "$snap_status" == "deleting" ]]; then
-              echo "Skipping temporary snapshot (busy): ${snap_name} - Status: ${snap_status}"
-              echo "- ⏳ Temp snapshot busy: ${snap_name} (${snap_status})" >> $GITHUB_STEP_SUMMARY
-            fi
-          done < <(openstack volume snapshot list -f json 2>/dev/null | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
+            done < <(echo "$SNAPSHOTS_JSON" | jq -r '.[] | [.ID, .Name, .Status] | join("|")' 2>/dev/null || true)
+          fi
           
           if [ "$TEMP_VOLUMES_CLEANED" -gt 0 ] || [ "$TEMP_SNAPSHOTS_CLEANED" -gt 0 ]; then
             echo "**Cleanup:** 🗑️ ${TEMP_VOLUMES_CLEANED} temp volume(s), ${TEMP_SNAPSHOTS_CLEANED} temp snapshot(s) deleted" >> $GITHUB_STEP_SUMMARY
