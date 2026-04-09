@@ -43,6 +43,7 @@ jobs:
     timeout-minutes: ${{ fromJSON(vars.JOB_TIMEOUT_MINUTES || github.event.inputs.job_timeout_minutes || '360') }}
     container:
       image: ghcr.io/net-architect-cloud/os-backup-scheduler:latest
+      options: --user 1001
     strategy:
       matrix:
         region: [dc3-a, dc4-a]
@@ -73,7 +74,6 @@ jobs:
           ZABBIX_SERVER: ${{ secrets.ZABBIX_SERVER }}
           ZABBIX_HOST: ${{ secrets.ZABBIX_HOST }}
         run: |
-          chmod 666 "$GITHUB_STEP_SUMMARY"
           echo "Running backup for region: ${{ matrix.region }}"
           /app/openstack-backup.py
 
