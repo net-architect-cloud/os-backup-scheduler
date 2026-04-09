@@ -361,7 +361,7 @@ def send_zabbix_metrics(total_success: int, total_stuck: int, total_error: int):
 def main():
     today = datetime.date.today().isoformat()
 
-    now_str = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+    now_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
     summary(f"## Verification Report — {REGION_NAME} — {now_str}", "")
 
     conn = get_connection()
