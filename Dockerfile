@@ -1,4 +1,4 @@
-FROM rockylinux/rockylinux:10-ubi-init
+FROM rockylinux/rockylinux:10-minimal
 
 LABEL maintainer="Net Architect"
 LABEL description="OpenStack Automatic Backup - Automated backup solution for OpenStack instances and volumes"
@@ -6,28 +6,27 @@ LABEL org.opencontainers.image.source="https://github.com/net-architect-cloud/os
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Install system dependencies
-RUN dnf install -y \
+RUN microdnf install -y \
     python3 \
     python3-pip \
-    jq \
-    findutils \
-    && dnf clean all
+    && microdnf clean all
 
-# Install OpenStack CLI
-RUN pip3 install --no-cache-dir python-openstackclient
+# Install OpenStack SDK and CLI
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Create app directory
 WORKDIR /app
 
-# Copy shared library first (changes less often, better layer caching)
-COPY lib/common.sh /app/lib/common.sh
-
 # Copy scripts
-COPY openstack-backup.sh /app/openstack-backup.sh
-COPY verify-backups.sh /app/verify-backups.sh
+COPY openstack-backup.py /app/openstack-backup.py
+COPY openstack-verify.py /app/openstack-verify.py
 
 # Make scripts executable
-RUN chmod +x /app/openstack-backup.sh /app/verify-backups.sh
+RUN chmod +x /app/openstack-backup.py /app/openstack-verify.py
+
+# Drop root privileges
+USER nobody
 
 # Set entrypoint
-ENTRYPOINT ["/app/openstack-backup.sh"]
+ENTRYPOINT ["/app/openstack-backup.py"]

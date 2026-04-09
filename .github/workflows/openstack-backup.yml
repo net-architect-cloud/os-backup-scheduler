@@ -12,17 +12,42 @@ on:
         description: 'Number of days to retain backups'
         required: false
         default: '14'
+      use_snapshot_method:
+        description: 'Use snapshot method for attached volume backups (true/false)'
+        required: false
+        default: 'true'
+      wait_for_backup:
+        description: 'Wait for backup completion before cleanup - sync mode (true/false)'
+        required: false
+        default: 'false'
+      backup_concurrency:
+        description: 'Max parallel volume backup workers'
+        required: false
+        default: '5'
+      resource_timeout:
+        description: 'Max seconds to wait for snapshot/temp-volume state transitions'
+        required: false
+        default: '3600'
+      backup_timeout:
+        description: 'Max seconds to wait for a backup to complete (compression + Swift upload can be very long)'
+        required: false
+        default: '86400'
+      job_timeout_minutes:
+        description: 'GitHub Actions job timeout in minutes — increase for sync mode on slow platforms'
+        required: false
+        default: '360'
 
 jobs:
   backup:
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(vars.JOB_TIMEOUT_MINUTES || github.event.inputs.job_timeout_minutes || '360') }}
     container:
       image: ghcr.io/net-architect-cloud/os-backup-scheduler:latest
     strategy:
       matrix:
         region: [dc3-a, dc4-a]
       fail-fast: false
-    
+
     steps:
       - name: Run backup for ${{ matrix.region }}
         id: backup
@@ -37,118 +62,27 @@ jobs:
           OS_USERNAME: ${{ secrets.OS_USERNAME }}
           OS_PASSWORD: ${{ secrets.OS_PASSWORD }}
           OS_PROJECT_NAME: ${{ secrets.OS_PROJECT_NAME }}
+          # Backup behaviour (overridable via repo variables or manual dispatch inputs)
           RETENTION_DAYS: ${{ vars.RETENTION_DAYS || github.event.inputs.retention_days || '14' }}
+          USE_SNAPSHOT_METHOD: ${{ vars.USE_SNAPSHOT_METHOD || github.event.inputs.use_snapshot_method || 'true' }}
+          WAIT_FOR_BACKUP: ${{ vars.WAIT_FOR_BACKUP || github.event.inputs.wait_for_backup || 'false' }}
+          BACKUP_CONCURRENCY: ${{ vars.BACKUP_CONCURRENCY || github.event.inputs.backup_concurrency || '5' }}
+          RESOURCE_TIMEOUT: ${{ vars.RESOURCE_TIMEOUT || github.event.inputs.resource_timeout || '3600' }}
+          BACKUP_TIMEOUT: ${{ vars.BACKUP_TIMEOUT || github.event.inputs.backup_timeout || '86400' }}
         run: |
           echo "Running backup for region: ${{ matrix.region }}"
-          /app/openstack-backup.sh
+          /app/openstack-backup.py
 
   # Notification job - runs only on backup failure
   notify:
-    runs-on: ubuntu-latest
     needs: backup
     if: failure()
-    
-    steps:
-      - name: Set notification status
-        id: status
-        run: |
-          echo "status=failure" >> $GITHUB_OUTPUT
-          echo "emoji=❌" >> $GITHUB_OUTPUT
-          echo "color=danger" >> $GITHUB_OUTPUT
-          echo "color_hex=dc3545" >> $GITHUB_OUTPUT
-          echo "message=OpenStack backup failed" >> $GITHUB_OUTPUT
-
-      - name: Detect notification configuration
-        id: notify_cfg
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
-        run: |
-          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then echo "slack=true" >> $GITHUB_OUTPUT; else echo "slack=false" >> $GITHUB_OUTPUT; fi
-          if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then echo "discord=true" >> $GITHUB_OUTPUT; else echo "discord=false" >> $GITHUB_OUTPUT; fi
-          if [ -n "${TEAMS_WEBHOOK_URL:-}" ]; then echo "teams=true" >> $GITHUB_OUTPUT; else echo "teams=false" >> $GITHUB_OUTPUT; fi
-          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then echo "telegram=true" >> $GITHUB_OUTPUT; else echo "telegram=false" >> $GITHUB_OUTPUT; fi
-
-      # Slack notification (only on failure, skipped if SLACK_WEBHOOK_URL secret is not set)
-      - name: Notify Slack
-        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.slack == 'true'
-        continue-on-error: true
-        uses: slackapi/slack-github-action@v1.25.0
-        with:
-          payload: |
-            {
-              "attachments": [
-                {
-                  "color": "${{ steps.status.outputs.color }}",
-                  "blocks": [
-                    {
-                      "type": "section",
-                      "text": {
-                        "type": "mrkdwn",
-                        "text": "${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*\n\n*Repository:* ${{ github.repository }}\n*Workflow:* ${{ github.workflow }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>"
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-
-      # Discord notification (only on failure, skipped if DISCORD_WEBHOOK_URL secret is not set)
-      - name: Notify Discord
-        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.discord == 'true'
-        continue-on-error: true
-        uses: Ilshidur/action-discord@0.3.2
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        with:
-          args: "${{ steps.status.outputs.emoji }} **${{ steps.status.outputs.message }}**\n\n**Repository:** ${{ github.repository }}\n**Workflow:** ${{ github.workflow }}\n**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-      # Microsoft Teams notification (only on failure, skipped if TEAMS_WEBHOOK_URL secret is not set)
-      - name: Notify Microsoft Teams
-        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.teams == 'true'
-        continue-on-error: true
-        uses: jdcargile/ms-teams-notification@v1.4
-        with:
-          github-token: ${{ github.token }}
-          ms-teams-webhook-uri: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          notification-summary: "${{ steps.status.outputs.message }}"
-          notification-color: ${{ steps.status.outputs.color_hex }}
-          timezone: UTC
-
-      # Telegram notification (only on failure, skipped if TELEGRAM_BOT_TOKEN secret or TELEGRAM_CHAT_ID variable is not set)
-      - name: Notify Telegram
-        if: needs.backup.result == 'failure' && steps.notify_cfg.outputs.telegram == 'true'
-        continue-on-error: true
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ vars.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          format: markdown
-          message: |
-            ${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*
-            
-            *Repository:* ${{ github.repository }}
-            *Workflow:* ${{ github.workflow }}
-            *Status:* ${{ needs.backup.result }}
-            
-            [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-      # GitHub issue creation (only on failure)
-      - name: Create issue on failure
-        if: needs.backup.result == 'failure' && vars.CREATE_ISSUE_ON_FAILURE == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: '❌ OpenStack Backup Failed',
-              body: `## Backup Failure Report\n\n**Workflow:** ${context.workflow}\n**Run ID:** ${context.runId}\n**Date:** ${new Date().toISOString()}\n\n[View Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
-              labels: ['backup-failure', 'automated']
-            })
+    uses: ./.github/workflows/notify.yml
+    secrets: inherit
+    with:
+      emoji: '❌'
+      message: 'OpenStack backup failed'
+      color: 'danger'
+      color_hex: 'dc3545'
+      issue_title: '❌ OpenStack Backup Failed'
+      issue_label: 'backup-failure'

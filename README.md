@@ -6,7 +6,8 @@ Automated backup solution for OpenStack instances and volumes using GitHub Actio
 
 - 💾 **Automatic backups** for instances (boot-from-image) and volumes
 - 🔍 **Smart detection** of boot-from-volume vs boot-from-image instances
-- 🌍 **Multi-region support** (runs backups across multiple OpenStack regions)
+- 🌍 **Multi-region support** (runs backups across multiple OpenStack regions in parallel)
+- ⚡ **Parallel volume backups** via concurrent workers (configurable)
 - 🗑️ **Configurable retention** with automatic cleanup of old backups
 - 📊 **GitHub Actions integration** with Job Summary reports
 - 🛡️ **Robust error handling** with status checks before backup operations
@@ -35,16 +36,21 @@ Go to **Settings** → **Secrets and variables** → **Actions** → **Secrets**
 
 Go to **Settings** → **Secrets and variables** → **Actions** → **Variables** and add:
 
-| Variable | Description | Example |
+| Variable | Description | Default |
 |----------|-------------|---------|
-| `OS_AUTH_URL` | OpenStack authentication URL | `https://api.example.cloud/identity` |
+| `OS_AUTH_URL` | OpenStack authentication URL | — |
 | `OS_USER_DOMAIN_NAME` | User domain name | `Default` |
 | `OS_PROJECT_DOMAIN_NAME` | Project domain name | `default` |
 | `OS_IDENTITY_API_VERSION` | Identity API version | `3` |
-| `RETENTION_DAYS` | Days to retain backups (optional) | `14` |
-| `USE_SNAPSHOT_METHOD` | Use snapshot method for attached volumes (optional) | `true` |
-| `WAIT_FOR_BACKUP` | Wait for backup completion before continuing (optional) | `false` |
-| `RESOURCE_TIMEOUT` | Timeout in seconds for snapshot operations (optional) | `3600` |
+| `RETENTION_DAYS` | Number of instance backups to retain (see note) | `14` |
+| `USE_SNAPSHOT_METHOD` | Use snapshot method for attached volumes | `true` |
+| `WAIT_FOR_BACKUP` | Wait for backup completion — sync mode | `false` |
+| `RESOURCE_TIMEOUT` | Max seconds to wait for snapshot/temp-volume transitions | `3600` |
+| `BACKUP_TIMEOUT` | Max seconds to wait for a backup (compression + Swift upload) | `86400` |
+| `BACKUP_CONCURRENCY` | Max parallel volume backup workers | `5` |
+| `JOB_TIMEOUT_MINUTES` | GitHub Actions job timeout in minutes | `360` |
+
+> **Note on `RETENTION_DAYS`:** For instance backups, Nova's `rotation` parameter controls the **number of backups to keep**, not days. With a daily schedule, `RETENTION_DAYS=14` keeps the last 14 backups = 14 days. Volume backup retention is time-based.
 
 ### 4. Configure regions
 
@@ -74,9 +80,9 @@ openstack volume set --property autoBackup='true' <volume-name-or-id>
 |---------------|---------------|
 | **Boot-from-image instance** | `openstack server backup create` (creates image snapshot) |
 | **Boot-from-volume instance** | Skipped (backup the volume directly) |
-| **Volume (detached)** | `openstack volume backup create` (direct backup) |
+| **Volume (detached)** | Direct volume backup |
 | **Volume (attached)** | Snapshot → Temp volume → Backup → Cleanup (default) |
-| **Volume (attached, legacy)** | `openstack volume backup create --force` (if `USE_SNAPSHOT_METHOD=false`) |
+| **Volume (attached, legacy)** | Force backup (if `USE_SNAPSHOT_METHOD=false`) |
 
 ### Backup naming convention
 
@@ -85,8 +91,6 @@ openstack volume set --property autoBackup='true' <volume-name-or-id>
 - Volumes without name: `autoBackup_<timestamp>_<attached-instance>_vol`
 
 ### Error handling and state detection
-
-The backup script includes robust error handling:
 
 **Instance state checks:**
 - Skips instances with active tasks (`task_state` not None)
@@ -131,14 +135,19 @@ To wait for backup completion (synchronous mode):
 export WAIT_FOR_BACKUP=true
 ```
 
+> **Note on sync mode timeouts:** On platforms that compress data before uploading to Swift, backups can take many hours. Use `BACKUP_TIMEOUT` (default: 86400s / 24h) to control how long the script waits for a backup, and `JOB_TIMEOUT_MINUTES` (default: 360) to extend the GitHub Actions job timeout accordingly.
+
 To use the legacy `--force` method instead:
 ```bash
 export USE_SNAPSHOT_METHOD=false
 ```
 
-You can also configure the timeout for snapshot operations (default: 3600 seconds / 60 minutes):
+### Parallel backups
+
+Volume backups run in parallel. Control the number of concurrent workers:
+
 ```bash
-export RESOURCE_TIMEOUT=7200  # 2 hours
+export BACKUP_CONCURRENCY=5  # default
 ```
 
 ### Retention
@@ -147,7 +156,7 @@ Backups older than the retention period are automatically deleted. Configure via
 
 1. **GitHub Variable** `RETENTION_DAYS` (recommended)
 2. **Manual trigger** input when running workflow
-3. **Default**: 14 days
+3. **Default**: 14
 
 ### Enable scheduled runs
 
@@ -186,7 +195,14 @@ schedule:
 
 1. Go to **Actions** → **OpenStack Automatic Backup**
 2. Click **Run workflow**
-3. Optionally set `retention_days`
+3. Optionally configure inputs:
+   - `retention_days`
+   - `use_snapshot_method`
+   - `wait_for_backup`
+   - `backup_concurrency`
+   - `resource_timeout`
+   - `backup_timeout`
+   - `job_timeout_minutes`
 4. Click **Run workflow**
 
 ## 🏷️ Tagging Resources via Horizon Dashboard
@@ -296,7 +312,7 @@ This project includes two GitHub Actions workflows:
 **What it does:**
 - Authenticates with OpenStack
 - Finds all resources with `autoBackup=true` metadata
-- Creates backups (images for instances, volume backups for volumes)
+- Creates backups (images for instances, volume backups for volumes) — volumes run in parallel
 - Deletes old backups based on retention policy
 - Generates summary report
 - Sends notifications on failure
@@ -315,12 +331,14 @@ This project includes two GitHub Actions workflows:
 - Checks today's backups status (active/stuck/error)
 - Detects old backups still stuck in processing
 - Verifies source volumes are in stable states
+- Cleans up temporary resources left by async mode
 - Generates detailed verification report with console output
 - Sends notifications on failure (stuck or failed backups)
 
 **Key features:**
 - 🔴 Detects backups stuck for multiple days
 - ⚠️ Identifies volumes in unstable states
+- 🧹 Cleans up temp snapshots/volumes safely (checks backup is complete before deleting)
 - 📊 Detailed console logs with all errors
 - ✅ Only alerts on actual problems
 
@@ -412,7 +430,7 @@ jobs:
           OS_REGION_NAME: ${{ matrix.region }}
           OS_IDENTITY_API_VERSION: ${{ vars.OS_IDENTITY_API_VERSION }}
           RETENTION_DAYS: ${{ vars.RETENTION_DAYS || '14' }}
-        run: /app/openstack-backup.sh
+        run: /app/openstack-backup.py
 ```
 
 ## 📦 Requirements
