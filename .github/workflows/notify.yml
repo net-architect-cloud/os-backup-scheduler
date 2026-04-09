@@ -46,13 +46,15 @@ jobs:
       - name: Notify Slack
         if: steps.channels.outputs.slack == 'true'
         continue-on-error: true
-        uses: slackapi/slack-github-action@v1.25.0
+        uses: slackapi/slack-github-action@v3.0.1
         with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
           payload: |
             {
               "attachments": [
                 {
-                  "color": "${{ inputs.color }}",
+                  "color": "${{ inputs.color_hex }}",
                   "blocks": [
                     {
                       "type": "section",
@@ -65,9 +67,6 @@ jobs:
                 }
               ]
             }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
       - name: Notify Discord
         if: steps.channels.outputs.discord == 'true'
