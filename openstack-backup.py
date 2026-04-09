@@ -338,7 +338,10 @@ def backup_volumes(conn: openstack.connection.Connection):
 ############################################################################
 
 def _parse_ts(ts: str) -> datetime.datetime:
-    return datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    dt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
 
 
 def delete_old_instance_backups(conn, expire_time: datetime.datetime):
