@@ -78,9 +78,12 @@ stats = Stats()
 
 def summary(*lines: str):
     """Append lines to GitHub Step Summary."""
-    with open(SUMMARY_FILE, 'a') as f:
-        for line in lines:
-            f.write(line + '\n')
+    try:
+        with open(SUMMARY_FILE, 'a') as f:
+            for line in lines:
+                f.write(line + '\n')
+    except (PermissionError, OSError):
+        pass
 
 
 def get_connection() -> openstack.connection.Connection:

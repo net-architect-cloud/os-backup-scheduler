@@ -36,14 +36,20 @@ ZABBIX_HOST   = os.environ.get('ZABBIX_HOST', '')
 
 def summary(*lines: str):
     """Append lines to GitHub Step Summary."""
-    with open(SUMMARY_FILE, 'a') as f:
-        for line in lines:
-            f.write(line + '\n')
+    try:
+        with open(SUMMARY_FILE, 'a') as f:
+            for line in lines:
+                f.write(line + '\n')
+    except (PermissionError, OSError):
+        pass
 
 
 def set_output(key: str, value):
-    with open(OUTPUT_FILE, 'a') as f:
-        f.write(f"{key}={value}\n")
+    try:
+        with open(OUTPUT_FILE, 'a') as f:
+            f.write(f"{key}={value}\n")
+    except (PermissionError, OSError):
+        pass
 
 
 def get_connection() -> openstack.connection.Connection:
